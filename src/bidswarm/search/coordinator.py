@@ -8,7 +8,8 @@ Each round, for every active (replicate, mode) pipeline:
 3. the ledger is charged before dispatch, the batch runs on the executor and
    results come back sorted by task index;
 4. each worker observes only its own candidates' results; the exchange policy
-   is called at the round boundary; anytime best-so-far is recorded.
+   is called at the round boundary (deliveries go to ``exchanges.jsonl``);
+   anytime best-so-far is recorded.
 
 All (replicate, mode) pipelines share one batch per round to keep the process
 pool busy; pipelines with fewer rounds simply drop out of later batches.
@@ -24,15 +25,23 @@ from typing import Any
 
 import numpy as np
 
-from ..artifacts.store import ANYTIME, CANDIDATES, EPISODES, RunStore
+from ..artifacts.store import ANYTIME, CANDIDATES, EPISODES, EXCHANGES, RunStore
 from ..config import ExperimentConfig
 from ..evaluation.budget import BudgetLedger, TrainingBudgetPlan
 from ..evaluation.metrics import mean_or_none
 from ..evaluation.runner import EpisodeExecutor
 from ..evaluation.selection import candidate_fitness
 from ..kernel import get_template
-from ..types import PHASE_TRAIN, STATUS_FAILED, STATUS_TIMEOUT, USABLE_STATUSES, EpisodeTask
-from .exchange import EvidenceCard, ExchangePolicy, NoExchange
+from ..types import (
+    MODE_COOPERATIVE,
+    MODE_INDEPENDENT,
+    PHASE_TRAIN,
+    STATUS_FAILED,
+    STATUS_TIMEOUT,
+    USABLE_STATUSES,
+    EpisodeTask,
+)
+from .exchange import EvidenceCard, ExchangePolicy, NoExchange, RingExchange
 from .proposers import make_proposer
 from .worker import SearchWorker
 
@@ -82,8 +91,16 @@ def build_pipeline(
     mode: str,
     train_scenarios: Sequence[dict[str, Any]],
 ) -> SearchPipeline:
-    """Same policy space, proposer and hyper-parameters for every mode; only N differs."""
+    """Same policy space, proposer and hyper-parameters for every mode.
+
+    Only N and the exchange differ: cooperative uses the same N as independent plus
+    ring migration, which costs no episodes. Cooperative workers also draw from the
+    independent workers' random streams (common random numbers), so the two modes
+    propose identical candidates until the first migration changes a parent.
+    """
     plan = config.budget_plan(mode)
+    cooperative = mode == MODE_COOPERATIVE
+    rng_mode = MODE_INDEPENDENT if cooperative else mode
     dim = len(get_template(config.search.policy).PARAM_DEFS)
     workers = [
         SearchWorker(
@@ -93,11 +110,13 @@ def build_pipeline(
             worker_id=w,
             policy_name=config.search.policy,
             proposer=make_proposer(config.search.proposer, dim, config.search.es),
-            rng=proposer_rng(master_seed, mode, w),
+            rng=proposer_rng(master_seed, rng_mode, w),
+            accepts_evidence=cooperative,
         )
         for w in range(plan.n_workers)
     ]
-    return SearchPipeline(replicate, master_seed, mode, plan, workers, tuple(train_scenarios), NoExchange())
+    exchange = RingExchange(config.search.exchange_interval, plan.rounds) if cooperative else NoExchange()
+    return SearchPipeline(replicate, master_seed, mode, plan, workers, tuple(train_scenarios), exchange)
 
 
 class Coordinator:
@@ -145,6 +164,7 @@ class Coordinator:
 
             # 4. each worker observes only its own candidates; exchange at the boundary
             anytime: list[dict[str, Any]] = []
+            deliveries: list[dict[str, Any]] = []
             for p, per_worker in zip(active, proposals):
                 outgoing: dict[int, list[EvidenceCard]] = {}
                 for w, records in per_worker:
@@ -159,14 +179,33 @@ class Coordinator:
                     p.candidates.extend(evaluated)
                     self.store.append_jsonl(CANDIDATES, evaluated)
                     outgoing[w.worker_id] = [
-                        EvidenceCard(c["candidate_id"], w.worker_id, round_index, c["spec_hash"], c["fitness"])
+                        EvidenceCard(
+                            c["candidate_id"], w.worker_id, round_index, c["spec_hash"], c["fitness"],
+                            tuple(c["normalized"]),
+                        )
                         for c in evaluated
                     ]
                 inbound = p.exchange.exchange(round_index, outgoing)
                 for w in p.workers:
-                    w.receive_evidence(inbound.get(w.worker_id, []))
+                    cards = inbound.get(w.worker_id, [])
+                    w.receive_evidence(cards)
+                    deliveries.extend(
+                        {
+                            "replicate": p.replicate,
+                            "mode": p.mode,
+                            "exchange": p.exchange.name,
+                            "round": round_index,
+                            "from_worker": card.source_worker,
+                            "to_worker": w.worker_id,
+                            "candidate_id": card.candidate_id,
+                            "candidate_round": card.round,
+                            "fitness": card.fitness,
+                        }
+                        for card in cards
+                    )
                 anytime.extend(self._anytime_records(p, round_index, k))
             self.store.append_jsonl(ANYTIME, anytime)
+            self.store.append_jsonl(EXCHANGES, deliveries)
 
     def _train_tasks(self, p: SearchPipeline, w: SearchWorker, rec: dict[str, Any]) -> list[EpisodeTask]:
         spec = {"name": rec["policy"], "params": rec["params"]}

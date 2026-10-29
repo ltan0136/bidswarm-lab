@@ -6,15 +6,15 @@
 - **"执行策略"一侧保持简单稳定**：一个只依赖 numpy 的数值出价函数（`bid = λ_t × cpa_target × p_adj`），
   将来要在 AuctionNet 的 Python 3.9 进程里逐时间步运行。
 
-v0.1 只是**工程底座 + 一个可信的"独立搜索"对照组**，没有实现经验交换、LLM 或记忆，也不要求搜索结果优于基线。
+v0.1 是**工程底座 + 可信的"独立搜索"对照组**，外加一个最小的经验交换模式 `cooperative`（环形精英迁移）。没有实现 LLM 或记忆，也不要求搜索结果优于基线。
 
 ## 当前能做什么 / 不能做什么
 
 | 能做（已实现并有测试） | 不能做 / 未实现 |
 |---|---|
 | 内置 toy 环境：形状对齐 AuctionNet 的 `bidding()` 8 个参数，共同随机数（CRN） | **AuctionNet 后端未接入**（`integration_status=not_integrated`，选择即报错，不回退 toy） |
-| 两个策略模板：FixedRate（1 维）、DualControl（8 维），可移植内核兼容 Python 3.9 | 没有经验交换语义（只有 `ExchangePolicy` 接口和 `NoExchange`） |
-| (1+λ)-ES 与随机采样 proposer；`single` 与 `independent` 两种模式 | 没有 LLM proposer、没有记忆、没有动态预算 |
+| 两个策略模板：FixedRate（1 维）、DualControl（8 维），可移植内核兼容 Python 3.9 | 只有一种交换：环形迁移各自的 best-so-far；没有全连接 / 随机配对拓扑，不共享失败区域或步长 |
+| (1+λ)-ES 与随机采样 proposer；`single`、`independent`、`cooperative` 三种模式 | 没有 LLM proposer、没有记忆、没有动态预算 |
 | 同步轮次调度、静态预算账本、谱系记录、进程池并行（spawn） | 没有硬超时（软超时只标记、不杀进程），没有重试 |
 | 训练 → 验证选择 → 单独的测试评估；配对 bootstrap 报告 | 没有 HTML 报告、没有数据库 |
 | 评分公式复刻 AuctionNet PlayerAnalysis（NeurIPS 竞赛版） | toy 结果**不代表** AuctionNet 表现或真实广告收益 |
@@ -53,6 +53,11 @@ python3.11 -m venv .venv
 
 - `doctor`：打印 Python 与 numpy 版本、内核 Python 3.9 语法检查结果、AuctionNet 的 `integration_status=not_integrated` 及阻塞原因。不安装任何东西。
 - `run --config <path> [--serial] [--max-workers N] [--out runs]`：搜索 + 验证集选择，**不执行测试**。
+
+三种模式在同一训练 episode 预算下比较：`single` 是 1 个搜索者；`independent` 是 N 个互不通信的搜索者；
+`cooperative` 与 `independent` 相同（同样的 N、预算和随机数流），只是每 `exchange_interval` 轮（默认 1）把每个搜索者
+自己的 best-so-far 沿环 w0→w1→…→w0 送给下一个搜索者，更优的外来候选会取代 ES 父代（σ 不变）。迁移不消耗 episode，
+最后一轮之后不迁移。报告给出 `independent − single`（只改变搜索者数）与 `cooperative − independent`（只改变是否迁移）两组配对比较。
 - `evaluate --run-dir <dir> [--serial] [--max-workers N] [--force]`：读取已固定的选定策略，在测试场景上评估它们和两个未调优基线，写入 `test_episodes.jsonl` 并刷新报告。已有测试结果时需 `--force` 才会重跑。
 - `report --run-dir <dir>`：只从产物重建 `report.md`。
 
@@ -75,6 +80,7 @@ python3.11 -m venv .venv
 | `candidates.jsonl` | 每个候选的谱系与训练 fitness（parent_id、operator、params、normalized、sigma、info_sources…） |
 | `episodes.jsonl` | 训练与验证阶段的每个 episode |
 | `anytime.jsonl` | 每轮结束时每个搜索者及模式整体的 best-so-far 与已用训练 episode 数 |
+| `exchanges.jsonl` | `cooperative` 的每次迁移：轮次、发送 / 接收搜索者、候选 ID 与 fitness（其他模式为空文件） |
 | `budget.json` | 预算账本：planned / used / failed / timeouts / retries |
 | `selected/<replicate>_<mode>.json` | 固定下来的选定策略：spec、spec_hash、候选短名单与验证分、选择规则 |
 | `summary.csv` | 每个 (replicate, 模式/基线) 一行 |

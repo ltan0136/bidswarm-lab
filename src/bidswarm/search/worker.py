@@ -1,4 +1,8 @@
-"""A searcher: one proposer, its own RNG, and its own candidate history."""
+"""A searcher: one proposer, its own RNG, and its own candidate history.
+
+A worker only ever sees its own results, plus - in ``cooperative`` mode - the
+evidence cards migrated to it from other workers of the same pipeline.
+"""
 
 from __future__ import annotations
 
@@ -28,6 +32,7 @@ class SearchWorker:
         policy_name: str,
         proposer: Proposer,
         rng: np.random.Generator,
+        accepts_evidence: bool = False,
     ) -> None:
         if proposer.dim != len(get_template(policy_name).PARAM_DEFS):
             raise ValueError("proposer dimension does not match the policy template")
@@ -38,15 +43,21 @@ class SearchWorker:
         self.policy_name = policy_name
         self.proposer = proposer
         self.rng = rng
+        self.accepts_evidence = accepts_evidence
         self._seq = 0
         self._pending: dict[str, dict[str, Any]] = {}
         self.own_ids: list[str] = []
+        self.received_ids: list[str] = []
         self.best_fitness: float | None = None
         self.best_candidate_id: str | None = None
 
     @property
+    def pipeline_prefix(self) -> str:
+        return f"r{self.replicate:02d}-{self.mode}-"
+
+    @property
     def prefix(self) -> str:
-        return f"r{self.replicate:02d}-{self.mode}-w{self.worker_id:02d}"
+        return f"{self.pipeline_prefix}w{self.worker_id:02d}"
 
     def propose(self, round_index: int, k: int) -> list[dict[str, Any]]:
         """Ask the proposer for k candidates based on this worker's own history."""
@@ -54,7 +65,7 @@ class SearchWorker:
             raise RuntimeError("previous round not observed yet")
         records = []
         for proposal in self.proposer.propose(k, self.rng):
-            unknown = set(proposal.info_sources) - set(self.own_ids)
+            unknown = set(proposal.info_sources) - set(self.own_ids) - set(self.received_ids)
             if unknown:
                 raise IsolationError(f"{self.prefix} proposal read foreign candidates: {sorted(unknown)}")
             spec = spec_from_normalized(self.policy_name, proposal.normalized)
@@ -98,6 +109,19 @@ class SearchWorker:
         self._pending = {}
 
     def receive_evidence(self, cards: Sequence[EvidenceCard]) -> None:
-        """Exchange hook. v1 has no exchange semantics, so any card is an error."""
-        if cards:
-            raise IsolationError(f"{self.prefix} received {len(cards)} evidence cards; exchange is not implemented")
+        """Exchange hook: only cooperative workers accept cards, and only from their own pipeline."""
+        if not cards:
+            return
+        if not self.accepts_evidence:
+            raise IsolationError(f"{self.prefix} received {len(cards)} evidence cards in {self.mode} mode")
+        if self._pending:
+            raise RuntimeError("evidence arrived before this round was observed")
+        for card in cards:
+            if not card.candidate_id.startswith(self.pipeline_prefix) or card.source_worker == self.worker_id:
+                raise IsolationError(f"{self.prefix} received a card from outside its pipeline: {card.candidate_id}")
+            if card.candidate_id in self.received_ids:
+                raise IsolationError(f"{self.prefix} received {card.candidate_id} twice")
+        self.received_ids.extend(card.candidate_id for card in cards)
+        self.proposer.receive(
+            [Observation(card.candidate_id, tuple(card.normalized), card.fitness) for card in cards]
+        )

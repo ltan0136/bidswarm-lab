@@ -16,7 +16,7 @@ from typing import Any, Mapping
 from .environments import validate_environment_config
 from .evaluation.budget import TrainingBudgetPlan, plan_training_budget
 from .kernel import registered_names
-from .types import FITNESS_METRICS, MODE_INDEPENDENT, MODE_SINGLE, MODES, ConfigError
+from .types import FITNESS_METRICS, MODE_COOPERATIVE, MODE_INDEPENDENT, MODE_SINGLE, MODES, ConfigError
 
 PROPOSERS = ("es", "random")
 
@@ -42,6 +42,7 @@ class SearchConfig:
     train_episode_budget: int
     fitness_metric: str
     es: EsConfig
+    exchange_interval: int = 1  # cooperative mode: ring migration every this many rounds
 
 
 @dataclass(frozen=True)
@@ -203,6 +204,7 @@ def _parse(data: Mapping[str, Any]) -> ExperimentConfig:
             "train_episode_budget",
             "fitness_metric",
             "es",
+            "exchange_interval",
         },
     )
     policy = _get_str(src, "search", "policy")
@@ -219,7 +221,7 @@ def _parse(data: Mapping[str, Any]) -> ExperimentConfig:
             raise ConfigError(f"[search] unknown mode {m!r}; known: {list(MODES)}")
     if len(set(modes_raw)) != len(modes_raw):
         raise ConfigError("[search] modes must not repeat")
-    modes = tuple(m for m in MODES if m in modes_raw)  # canonical order: single, independent
+    modes = tuple(m for m in MODES if m in modes_raw)  # canonical order: single, independent, cooperative
     fitness_metric = _get_str(src, "search", "fitness_metric", "score_expected")
     if fitness_metric not in FITNESS_METRICS:
         raise ConfigError(f"[search] fitness_metric must be one of {list(FITNESS_METRICS)}")
@@ -248,6 +250,7 @@ def _parse(data: Mapping[str, Any]) -> ExperimentConfig:
         train_episode_budget=_get_int(src, "search", "train_episode_budget", minimum=1),
         fitness_metric=fitness_metric,
         es=es,
+        exchange_interval=_get_int(src, "search", "exchange_interval", 1, minimum=1),
     )
 
     sel = _section(data, "selection")
@@ -279,6 +282,7 @@ def _parse(data: Mapping[str, Any]) -> ExperimentConfig:
         raise ConfigError(
             f"[selection] top_k={selection.top_k} exceeds the candidate pool ({smallest_pool})"
         )
-    if MODE_INDEPENDENT in modes and search.independent_workers < 2:
-        raise ConfigError("[search] independent mode needs independent_workers >= 2")
+    for mode in (MODE_INDEPENDENT, MODE_COOPERATIVE):
+        if mode in modes and search.independent_workers < 2:
+            raise ConfigError(f"[search] {mode} mode needs independent_workers >= 2")
     return cfg

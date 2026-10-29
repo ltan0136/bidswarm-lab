@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: tests + toy smoke (py${{ matrix.python-version }})
+    # Pinned: Python 3.9, used to check that the policy kernel still compiles for
+    # AuctionNet's interpreter, has no build for newer Ubuntu images.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          # The last entry becomes the default `python`; 3.9 is only put on PATH as python3.9.
+          python-version: |
+            3.9
+            ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -rs
+      - name: Toy smoke (run -> evaluate -> report)
+        run: |
+          python -m bidswarm doctor
+          python -m bidswarm run --config configs/toy_smoke.toml --out runs
+          run_dir=$(ls -d runs/toy_smoke-*)
+          python -m bidswarm evaluate --run-dir "$run_dir"
+          python -m bidswarm report --run-dir "$run_dir"
+          grep -q "cooperative − independent" "$run_dir/report.md"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: toy-smoke-py${{ matrix.python-version }}
+          path: runs/
+          if-no-files-found: ignore

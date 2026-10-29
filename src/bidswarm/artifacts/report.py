@@ -22,6 +22,7 @@ from .store import (
     BUDGET,
     CANDIDATES,
     EPISODES,
+    EXCHANGES,
     MANIFEST,
     REPORT,
     SUMMARY,
@@ -100,6 +101,8 @@ class _RunView:
         self.budget = store.read_json(BUDGET)
         self.candidates = store.read_jsonl(CANDIDATES)
         self.anytime = store.read_jsonl(ANYTIME)
+        # Runs from before cooperative mode have no exchanges.jsonl.
+        self.exchanges = store.read_jsonl(EXCHANGES) if store.exists(EXCHANGES) else []
         self.episodes = store.read_jsonl(EPISODES)
         self.selected = [store.read_json(f) for f in store.selected_files()]
         self.has_test = store.exists(TEST_EPISODES)
@@ -230,12 +233,19 @@ def _section_run_info(view: _RunView) -> list[str]:
         f"- backend={m['backend']}，integration_status={m['integration_status']}",
         f"- replicate 数 R={c['experiment']['replicates']}（master seed {m['master_seeds'][0]} 起连续递增）",
         f"- 模式：{', '.join(view.modes)}；策略模板：{s['policy']}；proposer：{s['proposer']}；"
-        f"每轮候选数 k={s['candidates_per_round']}；independent 搜索者数 N={s['independent_workers']}",
+        f"每轮候选数 k={s['candidates_per_round']}；independent / cooperative 搜索者数 N={s['independent_workers']}",
         f"- 训练预算：每个 (replicate, mode) {s['train_episode_budget']} 个训练 episode；"
         f"场景数 train/validation/test = {c['splits']['train']}/{c['splits']['validation']}/{c['splits']['test']}；"
         f"top_k={c['selection']['top_k']}",
         f"- 主指标（fitness、验证分、测试分）：`{view.metric}`",
     ]
+    if "cooperative" in view.modes:
+        n_deliveries = len(view.exchanges)
+        lines.append(
+            f"- cooperative：每 {s.get('exchange_interval', 1)} 轮把每个搜索者自己的 best-so-far 沿环 "
+            f"w0→w1→…→w{s['independent_workers'] - 1}→w0 送给下一个搜索者（最后一轮后不迁移，同一张卡不重复送达）；"
+            f"更优的外来候选取代 ES 父代，σ 不变。迁移不消耗 episode。本次共 {n_deliveries} 次送达，见 `exchanges.jsonl`。"
+        )
     plans = m["budget_plans"]
     lines += ["", "预算换算（配置校验时已检查整除）：", ""]
     lines += _table(
@@ -270,32 +280,45 @@ def _section_test(view: _RunView) -> list[str]:
     return lines + _table(["模式", "n", "score_expected", "score_realized"], rows)
 
 
-def _paired_diffs(view: _RunView, metric: str) -> list[float]:
+# (a, b): report a − b. Each pair changes one factor: number of searchers, then exchange.
+PAIRS = (("independent", "single"), ("cooperative", "independent"))
+
+
+def _paired_diffs(view: _RunView, metric: str, a_mode: str = "independent", b_mode: str = "single") -> list[float]:
     diffs = []
     for r in range(len(view.manifest["master_seeds"])):
-        a = view.test_value(r, "selected:independent", metric)
-        b = view.test_value(r, "selected:single", metric)
+        a = view.test_value(r, f"selected:{a_mode}", metric)
+        b = view.test_value(r, f"selected:{b_mode}", metric)
         if a is not None and b is not None:
             diffs.append(a - b)
     return diffs
 
 
 def _section_paired(view: _RunView) -> list[str]:
-    lines = ["## 3. 配对比较：independent − single", ""]
-    if not ("single" in view.modes and "independent" in view.modes):
-        return lines + ["本次运行未同时包含 single 与 independent，无配对比较。"]
+    lines = ["## 3. 配对比较", ""]
+    pairs = [(a, b) for a, b in PAIRS if a in view.modes and b in view.modes]
+    if not pairs:
+        return lines + ["本次运行没有可配对的模式（independent 与 single，或 cooperative 与 independent），无配对比较。"]
     if not view.has_test:
         return lines + ["尚未执行 `evaluate`，暂无测试结果。"]
     lines.append(
-        f"同一 replicate 内两模式共用同一组场景，差值按 replicate 配对。"
+        f"同一 replicate 内各模式共用同一组场景，差值按 replicate 配对。"
         f"置信区间为百分位 bootstrap（对 replicate 重采样 {BOOTSTRAP_RESAMPLES} 次，固定种子 {BOOTSTRAP_SEED}）。"
+        "independent − single 只改变搜索者数；cooperative − independent 只改变是否迁移。"
     )
-    lines.append("")
+    for a_mode, b_mode in pairs:
+        lines += ["", f"### {a_mode} − {b_mode}", ""]
+        lines += _paired_pair(view, a_mode, b_mode)
+    return lines
+
+
+def _paired_pair(view: _RunView, a_mode: str, b_mode: str) -> list[str]:
+    lines: list[str] = []
     rows = []
     primary_ci = None
     primary_n = 0
     for metric in (view.metric, *[m for m in ("score_expected", "score_realized") if m != view.metric]):
-        diffs = _paired_diffs(view, metric)
+        diffs = _paired_diffs(view, metric, a_mode, b_mode)
         ci = paired_bootstrap_ci(diffs)
         if metric == view.metric:
             primary_ci, primary_n = ci, len(diffs)
@@ -313,19 +336,20 @@ def _section_paired(view: _RunView) -> list[str]:
     if primary_ci is None:
         verdict = f"配对样本不足（n={primary_n} < 2），无法给出置信区间。"
     elif primary_ci[0] > 0:
-        verdict = "主指标的 95% CI 不含 0 且为正：在本 toy 设置下，independent 的测试分高于 single。"
+        verdict = f"主指标的 95% CI 不含 0 且为正：在本 toy 设置下，{a_mode} 的测试分高于 {b_mode}。"
     elif primary_ci[1] < 0:
-        verdict = "主指标的 95% CI 不含 0 且为负：在本 toy 设置下，independent 的测试分低于 single。"
+        verdict = f"主指标的 95% CI 不含 0 且为负：在本 toy 设置下，{a_mode} 的测试分低于 {b_mode}。"
     else:
-        verdict = "主指标的 95% CI 包含 0：在本 toy 设置下未观察到 independent 与 single 之间可分辨的差异。"
+        verdict = f"主指标的 95% CI 包含 0：在本 toy 设置下未观察到 {a_mode} 与 {b_mode} 之间可分辨的差异。"
     lines.append(f"结论（自动生成，仅描述上表）：{verdict}")
     if primary_n < 10:
         lines.append("")
         lines.append(f"注意：配对数只有 {primary_n}，bootstrap 区间很粗糙，不宜据此下结论。")
     if view.config["search"]["proposer"] == "random":
         lines.append("")
+        why = "（随机采样不使用迁移来的候选）" if a_mode == "cooperative" else ""
         lines.append(
-            "注意：proposer=random 时，single 与 independent 的候选在分布上等价，"
+            f"注意：proposer=random 时，{a_mode} 与 {b_mode} 的候选在分布上等价{why}，"
             "此比较只是正确性检查，不反映搜索方式的优劣。"
         )
     return lines

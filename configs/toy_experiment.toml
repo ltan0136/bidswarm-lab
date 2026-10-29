@@ -30,8 +30,9 @@ test = 16
 [search]
 policy = "dual_control"
 proposer = "es"
-modes = ["single", "independent"]
-independent_workers = 4
+modes = ["single", "independent", "cooperative"]
+independent_workers = 4                 # also the cooperative N
+exchange_interval = 1                   # cooperative: ring migration after every round but the last
 candidates_per_round = 2
 # 192 / 4 train scenarios = 48 candidates; single: 24 rounds, independent: 12 per worker, 6 rounds
 train_episode_budget = 192
