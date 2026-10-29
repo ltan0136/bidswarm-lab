@@ -8,7 +8,8 @@ Each round, for every active (replicate, mode) pipeline:
 3. the ledger is charged before dispatch, the batch runs on the executor and
    results come back sorted by task index;
 4. each worker observes only its own candidates' results; the exchange policy
-   is called at the round boundary; anytime best-so-far is recorded.
+   is called at the round boundary (deliveries and adoptions are logged to
+   exchange.jsonl for exchanging modes); anytime best-so-far is recorded.
 
 All (replicate, mode) pipelines share one batch per round to keep the process
 pool busy; pipelines with fewer rounds simply drop out of later batches.
@@ -24,15 +25,15 @@ from typing import Any
 
 import numpy as np
 
-from ..artifacts.store import ANYTIME, CANDIDATES, EPISODES, RunStore
+from ..artifacts.store import ANYTIME, CANDIDATES, EPISODES, EXCHANGE_LOG, RunStore
 from ..config import ExperimentConfig
 from ..evaluation.budget import BudgetLedger, TrainingBudgetPlan
 from ..evaluation.metrics import mean_or_none
 from ..evaluation.runner import EpisodeExecutor
 from ..evaluation.selection import candidate_fitness
 from ..kernel import get_template
-from ..types import PHASE_TRAIN, STATUS_FAILED, STATUS_TIMEOUT, USABLE_STATUSES, EpisodeTask
-from .exchange import EvidenceCard, ExchangePolicy, NoExchange
+from ..types import MODE_EXCHANGE, PHASE_TRAIN, STATUS_FAILED, STATUS_TIMEOUT, USABLE_STATUSES, EpisodeTask
+from .exchange import EvidenceCard, ExchangePolicy, NoExchange, make_exchange_policy
 from .proposers import make_proposer
 from .worker import SearchWorker
 
@@ -82,7 +83,11 @@ def build_pipeline(
     mode: str,
     train_scenarios: Sequence[dict[str, Any]],
 ) -> SearchPipeline:
-    """Same policy space, proposer and hyper-parameters for every mode; only N differs."""
+    """Same policy space, proposer and hyper-parameters for every mode.
+
+    Modes differ only in the number of workers (single: 1) and in the exchange
+    policy (exchange: the configured policy; single/independent: NoExchange).
+    """
     plan = config.budget_plan(mode)
     dim = len(get_template(config.search.policy).PARAM_DEFS)
     workers = [
@@ -97,7 +102,12 @@ def build_pipeline(
         )
         for w in range(plan.n_workers)
     ]
-    return SearchPipeline(replicate, master_seed, mode, plan, workers, tuple(train_scenarios), NoExchange())
+    if mode == MODE_EXCHANGE:
+        ex = config.search.exchange
+        exchange = make_exchange_policy(ex.policy, plan.n_workers, ex.topology)
+    else:
+        exchange = NoExchange()
+    return SearchPipeline(replicate, master_seed, mode, plan, workers, tuple(train_scenarios), exchange)
 
 
 class Coordinator:
@@ -145,6 +155,7 @@ class Coordinator:
 
             # 4. each worker observes only its own candidates; exchange at the boundary
             anytime: list[dict[str, Any]] = []
+            exchange_log: list[dict[str, Any]] = []
             for p, per_worker in zip(active, proposals):
                 outgoing: dict[int, list[EvidenceCard]] = {}
                 for w, records in per_worker:
@@ -159,14 +170,38 @@ class Coordinator:
                     p.candidates.extend(evaluated)
                     self.store.append_jsonl(CANDIDATES, evaluated)
                     outgoing[w.worker_id] = [
-                        EvidenceCard(c["candidate_id"], w.worker_id, round_index, c["spec_hash"], c["fitness"])
+                        EvidenceCard(
+                            c["candidate_id"],
+                            w.worker_id,
+                            round_index,
+                            c["spec_hash"],
+                            c["fitness"],
+                            tuple(c["normalized"]),
+                        )
                         for c in evaluated
                     ]
                 inbound = p.exchange.exchange(round_index, outgoing)
                 for w in p.workers:
-                    w.receive_evidence(inbound.get(w.worker_id, []))
+                    cards = inbound.get(w.worker_id, [])
+                    adopted = w.receive_evidence(cards)
+                    if not isinstance(p.exchange, NoExchange):
+                        exchange_log.append(
+                            {
+                                "replicate": p.replicate,
+                                "master_seed": p.master_seed,
+                                "mode": p.mode,
+                                "round": round_index,
+                                "policy": p.exchange.name,
+                                "worker_id": w.worker_id,
+                                "delivered": [c.candidate_id for c in cards],
+                                "delivered_fitness": [c.fitness for c in cards],
+                                "adopted": adopted,
+                                "parent_after": getattr(getattr(w.proposer, "parent", None), "candidate_id", None),
+                            }
+                        )
                 anytime.extend(self._anytime_records(p, round_index, k))
             self.store.append_jsonl(ANYTIME, anytime)
+            self.store.append_jsonl(EXCHANGE_LOG, exchange_log)
 
     def _train_tasks(self, p: SearchPipeline, w: SearchWorker, rec: dict[str, Any]) -> list[EpisodeTask]:
         spec = {"name": rec["policy"], "params": rec["params"]}

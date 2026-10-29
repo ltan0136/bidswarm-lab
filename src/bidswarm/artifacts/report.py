@@ -16,10 +16,11 @@ from typing import Any
 import numpy as np
 
 from ..evaluation.selection import candidate_fitness
-from ..types import MODES, PHASES
+from ..types import MODE_COMPARISONS, MODES, PHASES
 from .store import (
     ANYTIME,
     BUDGET,
+    EXCHANGE_LOG,
     CANDIDATES,
     EPISODES,
     MANIFEST,
@@ -32,6 +33,10 @@ from .store import (
 BOOTSTRAP_RESAMPLES = 10_000
 BOOTSTRAP_SEED = 20261030
 BOOTSTRAP_ALPHA = 0.05
+PERMUTATION_RESAMPLES = 20_000
+PERMUTATION_SEED = 20261031
+# Below this many pairs the percentile bootstrap is noticeably anti-conservative.
+SMALL_SAMPLE_PAIRS = 30
 
 SUMMARY_COLUMNS = (
     "replicate",
@@ -79,6 +84,25 @@ def paired_bootstrap_ci(
     return float(lo), float(hi)
 
 
+def paired_sign_flip_pvalue(
+    diffs: Sequence[float], resamples: int = PERMUTATION_RESAMPLES, seed: int = PERMUTATION_SEED
+) -> float | None:
+    """Two-sided paired sign-flip permutation p-value for H0: mean difference 0.
+
+    Exact (up to Monte Carlo error) when the differences are symmetric about 0
+    under H0, e.g. when the two arms are exchangeable.
+    """
+    d = np.asarray(diffs, dtype=float)
+    if d.size < 2:
+        return None
+    rng = np.random.default_rng(seed)
+    signs = rng.choice((-1.0, 1.0), size=(resamples, d.size))
+    null = np.abs((signs * d).mean(axis=1))
+    observed = abs(float(d.mean()))
+    hits = int(np.sum(null >= observed * (1 - 1e-12)))
+    return (hits + 1) / (resamples + 1)
+
+
 def _fmt(x: float | None, nd: int = 3) -> str:
     return "—" if x is None else f"{x:.{nd}f}"
 
@@ -100,6 +124,7 @@ class _RunView:
         self.budget = store.read_json(BUDGET)
         self.candidates = store.read_jsonl(CANDIDATES)
         self.anytime = store.read_jsonl(ANYTIME)
+        self.exchange_log = store.read_jsonl(EXCHANGE_LOG) if store.exists(EXCHANGE_LOG) else []
         self.episodes = store.read_jsonl(EPISODES)
         self.selected = [store.read_json(f) for f in store.selected_files()]
         self.has_test = store.exists(TEST_EPISODES)
@@ -236,6 +261,12 @@ def _section_run_info(view: _RunView) -> list[str]:
         f"top_k={c['selection']['top_k']}",
         f"- 主指标（fitness、验证分、测试分）：`{view.metric}`",
     ]
+    if "exchange" in view.modes:
+        ex = s.get("exchange", {"policy": "share_best", "topology": "all"})
+        lines.append(
+            f"- exchange 模式：policy={ex['policy']}，topology={ex['topology']}；"
+            "single / independent 不交换（NoExchange）"
+        )
     plans = m["budget_plans"]
     lines += ["", "预算换算（配置校验时已检查整除）：", ""]
     lines += _table(
@@ -270,65 +301,85 @@ def _section_test(view: _RunView) -> list[str]:
     return lines + _table(["模式", "n", "score_expected", "score_realized"], rows)
 
 
-def _paired_diffs(view: _RunView, metric: str) -> list[float]:
+def _paired_diffs(view: _RunView, metric: str, a: str, b: str) -> list[float]:
     diffs = []
     for r in range(len(view.manifest["master_seeds"])):
-        a = view.test_value(r, "selected:independent", metric)
-        b = view.test_value(r, "selected:single", metric)
-        if a is not None and b is not None:
-            diffs.append(a - b)
+        va = view.test_value(r, f"selected:{a}", metric)
+        vb = view.test_value(r, f"selected:{b}", metric)
+        if va is not None and vb is not None:
+            diffs.append(va - vb)
     return diffs
 
 
+def _comparisons(view: _RunView) -> list[tuple[str, str]]:
+    return [(a, b) for a, b in MODE_COMPARISONS if a in view.modes and b in view.modes]
+
+
 def _section_paired(view: _RunView) -> list[str]:
-    lines = ["## 3. 配对比较：independent − single", ""]
-    if not ("single" in view.modes and "independent" in view.modes):
-        return lines + ["本次运行未同时包含 single 与 independent，无配对比较。"]
+    pairs = _comparisons(view)
+    title = "；".join(f"{a} − {b}" for a, b in pairs) or "无"
+    lines = [f"## 3. 配对比较：{title}", ""]
+    if not pairs:
+        return lines + ["本次运行没有可配对比较的模式组合。"]
     if not view.has_test:
         return lines + ["尚未执行 `evaluate`，暂无测试结果。"]
     lines.append(
-        f"同一 replicate 内两模式共用同一组场景，差值按 replicate 配对。"
-        f"置信区间为百分位 bootstrap（对 replicate 重采样 {BOOTSTRAP_RESAMPLES} 次，固定种子 {BOOTSTRAP_SEED}）。"
+        "同一 replicate 内各模式共用同一组场景，差值按 replicate 配对。"
+        f"置信区间为百分位 bootstrap（对 replicate 重采样 {BOOTSTRAP_RESAMPLES} 次，固定种子 {BOOTSTRAP_SEED}）；"
+        f"p 值为配对符号翻转置换检验（{PERMUTATION_RESAMPLES} 次，固定种子 {PERMUTATION_SEED}）。"
     )
     lines.append("")
+    metrics = (view.metric, *[m for m in ("score_expected", "score_realized") if m != view.metric])
     rows = []
-    primary_ci = None
+    verdicts = []
     primary_n = 0
-    for metric in (view.metric, *[m for m in ("score_expected", "score_realized") if m != view.metric]):
-        diffs = _paired_diffs(view, metric)
-        ci = paired_bootstrap_ci(diffs)
-        if metric == view.metric:
-            primary_ci, primary_n = ci, len(diffs)
-        tag = "（主指标）" if metric == view.metric else ""
-        rows.append(
-            [
-                f"{metric}{tag}",
-                len(diffs),
-                _fmt(_mean(diffs)),
-                "—" if ci is None else f"[{_fmt(ci[0])}, {_fmt(ci[1])}]",
-            ]
-        )
-    lines += _table(["指标", "配对数 n", "差值均值", "95% bootstrap CI"], rows)
+    for a, b in pairs:
+        for metric in metrics:
+            diffs = _paired_diffs(view, metric, a, b)
+            ci = paired_bootstrap_ci(diffs)
+            p = paired_sign_flip_pvalue(diffs)
+            tag = "（主指标）" if metric == view.metric else ""
+            rows.append(
+                [
+                    f"{a} − {b}",
+                    f"{metric}{tag}",
+                    len(diffs),
+                    _fmt(_mean(diffs)),
+                    "—" if ci is None else f"[{_fmt(ci[0])}, {_fmt(ci[1])}]",
+                    "—" if p is None else f"{p:.3f}",
+                ]
+            )
+            if metric == view.metric:
+                primary_n = max(primary_n, len(diffs))
+                verdicts.append(_verdict(a, b, ci, p, len(diffs)))
+    lines += _table(["比较", "指标", "配对数 n", "差值均值", "95% bootstrap CI", "置换检验 p"], rows)
     lines.append("")
-    if primary_ci is None:
-        verdict = f"配对样本不足（n={primary_n} < 2），无法给出置信区间。"
-    elif primary_ci[0] > 0:
-        verdict = "主指标的 95% CI 不含 0 且为正：在本 toy 设置下，independent 的测试分高于 single。"
-    elif primary_ci[1] < 0:
-        verdict = "主指标的 95% CI 不含 0 且为负：在本 toy 设置下，independent 的测试分低于 single。"
-    else:
-        verdict = "主指标的 95% CI 包含 0：在本 toy 设置下未观察到 independent 与 single 之间可分辨的差异。"
-    lines.append(f"结论（自动生成，仅描述上表）：{verdict}")
-    if primary_n < 10:
+    lines.append("结论（自动生成，仅描述上表的主指标）：")
+    lines.extend(f"- {v}" for v in verdicts)
+    if primary_n < SMALL_SAMPLE_PAIRS:
         lines.append("")
-        lines.append(f"注意：配对数只有 {primary_n}，bootstrap 区间很粗糙，不宜据此下结论。")
+        lines.append(
+            f"注意：配对数只有 {primary_n}（< {SMALL_SAMPLE_PAIRS}）。此时百分位 bootstrap 区间偏窄，"
+            "实际假阳性率高于名义 5%（实测见 docs/POWER_ANALYSIS.md），应同时参考置换检验 p 值。"
+        )
     if view.config["search"]["proposer"] == "random":
         lines.append("")
         lines.append(
-            "注意：proposer=random 时，single 与 independent 的候选在分布上等价，"
-            "此比较只是正确性检查，不反映搜索方式的优劣。"
+            "注意：proposer=random 时，各模式的候选在分布上等价，"
+            "这些比较只是正确性检查，不反映搜索方式的优劣。"
         )
     return lines
+
+
+def _verdict(a: str, b: str, ci: tuple[float, float] | None, p: float | None, n: int) -> str:
+    if ci is None or p is None:
+        return f"{a} − {b}：配对样本不足（n={n} < 2），无法给出置信区间。"
+    p_text = f"置换检验 p = {p:.3f}"
+    if ci[0] > 0:
+        return f"{a} − {b}：95% CI 不含 0 且为正（{p_text}）：在本 toy 设置下 {a} 的测试分高于 {b}。"
+    if ci[1] < 0:
+        return f"{a} − {b}：95% CI 不含 0 且为负（{p_text}）：在本 toy 设置下 {a} 的测试分低于 {b}。"
+    return f"{a} − {b}：95% CI 包含 0（{p_text}）：在本 toy 设置下未观察到可分辨的差异。"
 
 
 def _section_winners_curse(view: _RunView) -> list[str]:
@@ -462,6 +513,41 @@ def _section_budget(view: _RunView) -> list[str]:
     return lines
 
 
+def _section_exchange(view: _RunView) -> list[str]:
+    lines = ["## 9. 信息交换", ""]
+    if "exchange" not in view.modes:
+        return lines + ["本次运行没有 exchange 模式；所有搜索者都不交换信息（NoExchange）。"]
+    by_id = {c["candidate_id"]: c for c in view.candidates}
+    rows = []
+    for mode in view.modes:
+        log = [e for e in view.exchange_log if e["mode"] == mode]
+        cands = [c for c in view.candidates if c["mode"] == mode]
+        foreign_parent = sum(
+            c["parent_id"] is not None and by_id[c["parent_id"]]["worker_id"] != c["worker_id"] for c in cands
+        )
+        foreign_info = sum(
+            any(by_id[i]["worker_id"] != c["worker_id"] for i in c["info_sources"]) for c in cands
+        )
+        rows.append(
+            [
+                mode,
+                len(log),
+                sum(len(e["delivered"]) for e in log),
+                sum(e["adopted"] is not None for e in log),
+                f"{foreign_parent}/{len(cands)}",
+                f"{foreign_info}/{len(cands)}",
+            ]
+        )
+    lines.append(
+        "交换只在轮次边界发生、不消耗 episode。表中对全部 replicate 求和；"
+        "\"外来父代\"指父代来自同一 (replicate, mode) 内其他搜索者的候选。"
+    )
+    lines.append("")
+    return lines + _table(
+        ["模式", "交换记录数（搜索者 × 轮）", "送达卡片", "采纳次数", "外来父代候选", "info_sources 含外来候选"], rows
+    )
+
+
 def _section_artifacts(view: _RunView) -> list[str]:
     files = [
         "manifest.json",
@@ -469,13 +555,14 @@ def _section_artifacts(view: _RunView) -> list[str]:
         "candidates.jsonl",
         "episodes.jsonl",
         "anytime.jsonl",
+        "exchange.jsonl" + ("" if view.store.exists(EXCHANGE_LOG) else "（本次运行没有该文件）"),
         "budget.json",
         "selected/*.json",
         "summary.csv",
         "test_episodes.jsonl" + ("" if view.has_test else "（尚未生成）"),
         "report.md",
     ]
-    return ["## 9. 产物", "", "本报告只读取以下产物生成（`python -m bidswarm report --run-dir <dir>` 可重建）：", ""] + [
+    return ["## 10. 产物", "", "本报告只读取以下产物生成（`python -m bidswarm report --run-dir <dir>` 可重建）：", ""] + [
         f"- `{f}`" for f in files
     ]
 
@@ -492,6 +579,7 @@ def build_report(store: RunStore) -> str:
         _section_details(view),
         _section_anytime(view),
         _section_budget(view),
+        _section_exchange(view),
         _section_artifacts(view),
         [_disclaimer(view)],
     ]

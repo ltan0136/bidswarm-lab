@@ -41,6 +41,7 @@ class SearchWorker:
         self._seq = 0
         self._pending: dict[str, dict[str, Any]] = {}
         self.own_ids: list[str] = []
+        self.foreign_ids: list[str] = []  # candidates delivered to this worker by the exchange policy
         self.best_fitness: float | None = None
         self.best_candidate_id: str | None = None
 
@@ -54,7 +55,7 @@ class SearchWorker:
             raise RuntimeError("previous round not observed yet")
         records = []
         for proposal in self.proposer.propose(k, self.rng):
-            unknown = set(proposal.info_sources) - set(self.own_ids)
+            unknown = set(proposal.info_sources) - set(self.own_ids) - set(self.foreign_ids)
             if unknown:
                 raise IsolationError(f"{self.prefix} proposal read foreign candidates: {sorted(unknown)}")
             spec = spec_from_normalized(self.policy_name, proposal.normalized)
@@ -97,7 +98,13 @@ class SearchWorker:
         self.own_ids.extend(ids)
         self._pending = {}
 
-    def receive_evidence(self, cards: Sequence[EvidenceCard]) -> None:
-        """Exchange hook. v1 has no exchange semantics, so any card is an error."""
-        if cards:
-            raise IsolationError(f"{self.prefix} received {len(cards)} evidence cards; exchange is not implemented")
+    def receive_evidence(self, cards: Sequence[EvidenceCard]) -> str | None:
+        """Pass cards delivered by the exchange policy to the proposer; return the adopted ID."""
+        own = set(self.own_ids)
+        for card in cards:
+            if card.source_worker == self.worker_id or card.candidate_id in own:
+                raise IsolationError(f"{self.prefix} was sent its own candidate {card.candidate_id}")
+            if not card.candidate_id.startswith(f"r{self.replicate:02d}-{self.mode}-"):
+                raise IsolationError(f"{self.prefix} was sent a card from another pipeline: {card.candidate_id}")
+        self.foreign_ids.extend(c.candidate_id for c in cards if c.candidate_id not in self.foreign_ids)
+        return self.proposer.receive(cards)

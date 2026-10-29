@@ -26,7 +26,14 @@ SPLITS = (PHASE_TRAIN, PHASE_VALIDATION, PHASE_TEST)
 
 MODE_SINGLE = "single"
 MODE_INDEPENDENT = "independent"
-MODES = (MODE_SINGLE, MODE_INDEPENDENT)
+MODE_EXCHANGE = "exchange"
+MODES = (MODE_SINGLE, MODE_INDEPENDENT, MODE_EXCHANGE)
+# Paired comparisons reported as (a, b) -> a - b, when both modes are present.
+MODE_COMPARISONS = (
+    (MODE_INDEPENDENT, MODE_SINGLE),
+    (MODE_EXCHANGE, MODE_INDEPENDENT),
+    (MODE_EXCHANGE, MODE_SINGLE),
+)
 
 OP_INIT_RANDOM = "init_random"
 OP_GAUSSIAN_MUTATION = "gaussian_mutation"

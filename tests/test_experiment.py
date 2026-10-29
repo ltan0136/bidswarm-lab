@@ -320,3 +320,12 @@ def test_overlapping_splits_are_rejected():
         check_disjoint(SplitSet(0, 0, train=(a,), validation=({"scenario_id": "b", "seed": 1},), test=()))
     with pytest.raises(SplitOverlapError, match="id"):
         check_disjoint(SplitSet(0, 0, train=(a,), validation=(), test=({"scenario_id": "a", "seed": 2},)))
+
+
+def test_replicate_results_do_not_depend_on_number_of_replicates(small_run_dir: Path, tmp_path: Path):
+    """Replicate r is a pure function of (config, master_seed r): a short run is a prefix of a long one."""
+    short = run_experiment(small_config(experiment={"replicates": 1}), out_root=tmp_path, serial=True)
+    for name in ("00_single.json", "00_independent.json"):
+        assert (short / "selected" / name).read_text() == (small_run_dir / "selected" / name).read_text()
+    long_candidates = [c for c in read_jsonl(small_run_dir / "candidates.jsonl") if c["replicate"] == 0]
+    assert read_jsonl(short / "candidates.jsonl") == long_candidates

@@ -2,13 +2,18 @@
 
 Interface: ``propose(k, rng)`` returns k proposals, then ``observe(results)``
 receives the fitness of exactly those proposals (the proposer's own results).
+Between rounds ``receive(cards)`` may deliver evidence from other workers
+(exchange mode only); it returns the candidate ID adopted, if any.
 
 * ``EsProposer`` - (1+lambda)-ES with lambda = k and the 1/5th-style step
   rule: sigma *= success_factor after a round with an improving child,
   otherwise sigma *= failure_factor, clamped to [sigma_min, sigma_max].
-* ``RandomProposer`` - independent uniform sampling, a control only. Under
-  random sampling ``single`` and ``independent`` are equal in distribution, so
-  comparing them is only a correctness check.
+  ``receive`` adopts the best foreign card as parent when it is strictly
+  better than the current parent; sigma is not changed by adoption.
+* ``RandomProposer`` - independent uniform sampling, a control only. It ignores
+  evidence, so under random sampling ``single``, ``independent`` and
+  ``exchange`` are equal in distribution and comparing them is only a
+  correctness check.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ import numpy as np
 
 from ..config import EsConfig
 from ..types import OP_GAUSSIAN_MUTATION, OP_INIT_RANDOM, OP_RANDOM
+from .exchange import EvidenceCard
 
 
 @dataclass(frozen=True)
@@ -64,6 +70,10 @@ class Proposer(ABC):
     @abstractmethod
     def observe(self, own_results: Sequence[Observation]) -> None:
         ...
+
+    def receive(self, cards: Sequence[EvidenceCard]) -> str | None:
+        """Evidence from other workers; the default ignores it and adopts nothing."""
+        return None
 
     def _uniform(self, k: int, rng: np.random.Generator) -> list[tuple[float, ...]]:
         return [tuple(float(x) for x in row) for row in rng.random((k, self.dim))]
@@ -128,6 +138,20 @@ class EsProposer(Proposer):
                 self.sigma *= self.es.failure_factor
             self.sigma = min(max(self.sigma, self.es.sigma_min), self.es.sigma_max)
         self._pending = None
+
+    def receive(self, cards: Sequence[EvidenceCard]) -> str | None:
+        if self._pending is not None:
+            raise RuntimeError("receive() called between propose() and observe()")
+        for c in cards:  # compared against the parent, so they inform the next proposal
+            if c.candidate_id not in self._seen:
+                self._seen.append(c.candidate_id)
+        best = _best([Observation(c.candidate_id, c.normalized, c.fitness) for c in cards])
+        if best is None:
+            return None
+        if self.parent is None or best.fitness > self.parent.fitness:
+            self.parent = best
+            return best.candidate_id
+        return None
 
 
 def make_proposer(name: str, dim: int, es: EsConfig) -> Proposer:

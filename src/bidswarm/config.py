@@ -16,9 +16,12 @@ from typing import Any, Mapping
 from .environments import validate_environment_config
 from .evaluation.budget import TrainingBudgetPlan, plan_training_budget
 from .kernel import registered_names
-from .types import FITNESS_METRICS, MODE_INDEPENDENT, MODE_SINGLE, MODES, ConfigError
+from .types import FITNESS_METRICS, MODE_EXCHANGE, MODE_INDEPENDENT, MODE_SINGLE, MODES, ConfigError
 
 PROPOSERS = ("es", "random")
+EXCHANGE_POLICIES = ("share_best",)
+EXCHANGE_TOPOLOGIES = ("all", "ring")
+DEFAULT_MODES = (MODE_SINGLE, MODE_INDEPENDENT)
 
 _SECTIONS = {"experiment", "environment", "splits", "search", "selection", "runtime"}
 
@@ -33,6 +36,14 @@ class EsConfig:
 
 
 @dataclass(frozen=True)
+class ExchangeConfig:
+    """Used only by the ``exchange`` mode; single/independent never exchange."""
+
+    policy: str = "share_best"
+    topology: str = "all"
+
+
+@dataclass(frozen=True)
 class SearchConfig:
     policy: str
     proposer: str
@@ -42,6 +53,7 @@ class SearchConfig:
     train_episode_budget: int
     fitness_metric: str
     es: EsConfig
+    exchange: ExchangeConfig = ExchangeConfig()
 
 
 @dataclass(frozen=True)
@@ -78,6 +90,7 @@ class ExperimentConfig:
         return self.environment["backend"]
 
     def n_workers(self, mode: str) -> int:
+        """single: 1; independent and exchange: the same N (independent_workers)."""
         return 1 if mode == MODE_SINGLE else self.search.independent_workers
 
     def budget_plan(self, mode: str) -> TrainingBudgetPlan:
@@ -203,6 +216,7 @@ def _parse(data: Mapping[str, Any]) -> ExperimentConfig:
             "train_episode_budget",
             "fitness_metric",
             "es",
+            "exchange",
         },
     )
     policy = _get_str(src, "search", "policy")
@@ -211,7 +225,7 @@ def _parse(data: Mapping[str, Any]) -> ExperimentConfig:
     proposer = _get_str(src, "search", "proposer", "es")
     if proposer not in PROPOSERS:
         raise ConfigError(f"[search] unknown proposer {proposer!r}; known: {list(PROPOSERS)}")
-    modes_raw = src.get("modes", list(MODES))
+    modes_raw = src.get("modes", list(DEFAULT_MODES))
     if not isinstance(modes_raw, list) or not modes_raw:
         raise ConfigError("[search] modes must be a non-empty list")
     for m in modes_raw:
@@ -219,7 +233,7 @@ def _parse(data: Mapping[str, Any]) -> ExperimentConfig:
             raise ConfigError(f"[search] unknown mode {m!r}; known: {list(MODES)}")
     if len(set(modes_raw)) != len(modes_raw):
         raise ConfigError("[search] modes must not repeat")
-    modes = tuple(m for m in MODES if m in modes_raw)  # canonical order: single, independent
+    modes = tuple(m for m in MODES if m in modes_raw)  # canonical order: single, independent, exchange
     fitness_metric = _get_str(src, "search", "fitness_metric", "score_expected")
     if fitness_metric not in FITNESS_METRICS:
         raise ConfigError(f"[search] fitness_metric must be one of {list(FITNESS_METRICS)}")
@@ -239,6 +253,19 @@ def _parse(data: Mapping[str, Any]) -> ExperimentConfig:
     if not es.success_factor > 1 or not 0 < es.failure_factor < 1:
         raise ConfigError("[search.es] require success_factor > 1 and 0 < failure_factor < 1")
 
+    ex_sec = _section(src, "exchange", required=False)
+    _check_keys(ex_sec, "search.exchange", set(ExchangeConfig.__dataclass_fields__))
+    exchange = ExchangeConfig(
+        policy=_get_str(ex_sec, "search.exchange", "policy", ExchangeConfig.policy),
+        topology=_get_str(ex_sec, "search.exchange", "topology", ExchangeConfig.topology),
+    )
+    if exchange.policy not in EXCHANGE_POLICIES:
+        raise ConfigError(f"[search.exchange] unknown policy {exchange.policy!r}; known: {list(EXCHANGE_POLICIES)}")
+    if exchange.topology not in EXCHANGE_TOPOLOGIES:
+        raise ConfigError(
+            f"[search.exchange] unknown topology {exchange.topology!r}; known: {list(EXCHANGE_TOPOLOGIES)}"
+        )
+
     search = SearchConfig(
         policy=policy,
         proposer=proposer,
@@ -248,6 +275,7 @@ def _parse(data: Mapping[str, Any]) -> ExperimentConfig:
         train_episode_budget=_get_int(src, "search", "train_episode_budget", minimum=1),
         fitness_metric=fitness_metric,
         es=es,
+        exchange=exchange,
     )
 
     sel = _section(data, "selection")
@@ -279,6 +307,6 @@ def _parse(data: Mapping[str, Any]) -> ExperimentConfig:
         raise ConfigError(
             f"[selection] top_k={selection.top_k} exceeds the candidate pool ({smallest_pool})"
         )
-    if MODE_INDEPENDENT in modes and search.independent_workers < 2:
-        raise ConfigError("[search] independent mode needs independent_workers >= 2")
+    if (MODE_INDEPENDENT in modes or MODE_EXCHANGE in modes) and search.independent_workers < 2:
+        raise ConfigError("[search] independent and exchange modes need independent_workers >= 2")
     return cfg
