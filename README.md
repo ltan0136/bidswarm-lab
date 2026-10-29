@@ -6,17 +6,20 @@
 - **"执行策略"一侧保持简单稳定**：一个只依赖 numpy 的数值出价函数（`bid = λ_t × cpa_target × p_adj`），
   将来要在 AuctionNet 的 Python 3.9 进程里逐时间步运行。
 
-v0.1 只是**工程底座 + 一个可信的"独立搜索"对照组**，没有实现经验交换、LLM 或记忆，也不要求搜索结果优于基线。
+v0.1 是**工程底座 + 一个可信的"独立搜索"对照组**；v0.2 加入**统计功效分析**（[docs/POWER_ANALYSIS.md](docs/POWER_ANALYSIS.md)）
+和**最小的信息交换**（`exchange` 模式，精英迁移）。没有 LLM 或记忆，也不要求搜索结果优于基线。
 
 ## 当前能做什么 / 不能做什么
 
 | 能做（已实现并有测试） | 不能做 / 未实现 |
 |---|---|
 | 内置 toy 环境：形状对齐 AuctionNet 的 `bidding()` 8 个参数，共同随机数（CRN） | **AuctionNet 后端未接入**（`integration_status=not_integrated`，选择即报错，不回退 toy） |
-| 两个策略模板：FixedRate（1 维）、DualControl（8 维），可移植内核兼容 Python 3.9 | 没有经验交换语义（只有 `ExchangePolicy` 接口和 `NoExchange`） |
-| (1+λ)-ES 与随机采样 proposer；`single` 与 `independent` 两种模式 | 没有 LLM proposer、没有记忆、没有动态预算 |
+| 两个策略模板：FixedRate（1 维）、DualControl（8 维），可移植内核兼容 Python 3.9 | 只有两个手写模板，策略空间固定 |
+| (1+λ)-ES 与随机采样 proposer；`single`、`independent`、`exchange` 三种模式 | 没有 LLM proposer、没有记忆、没有动态预算 |
+| 信息交换：`ShareBest`（`all` / `ring`），ES 采纳更优的外来父代，`exchange.jsonl` 审计 | 交换只有一种内容（best-so-far）；交换免费，不建模通信成本 |
+| 统计功效分析脚本：A/A 校准、MDE、阳性对照（`scripts/power_analysis.py`） | toy 上 R = 20 只能检出 ≥ 3.5 分的效应；比较交换需 R ≥ 100 |
 | 同步轮次调度、静态预算账本、谱系记录、进程池并行（spawn） | 没有硬超时（软超时只标记、不杀进程），没有重试 |
-| 训练 → 验证选择 → 单独的测试评估；配对 bootstrap 报告 | 没有 HTML 报告、没有数据库 |
+| 训练 → 验证选择 → 单独的测试评估；配对 bootstrap CI + 置换检验报告 | 没有 HTML 报告、没有数据库 |
 | 评分公式复刻 AuctionNet PlayerAnalysis（NeurIPS 竞赛版） | toy 结果**不代表** AuctionNet 表现或真实广告收益 |
 
 ## 安装
@@ -61,8 +64,20 @@ python3.11 -m venv .venv
 | 配置 | 用途 |
 |---|---|
 | `toy_smoke.toml` | 冒烟测试：R=3，预算 96，单机串行约 10 秒 |
-| `toy_experiment.toml` | toy 上的完整对照：R=20，预算 192 |
+| `toy_experiment.toml` | single vs independent：R=20，预算 192（只够检出 ≥ 3.5 分的效应） |
+| `toy_experiment_random.toml` | 上一行的 random A/A 对照 |
+| `toy_exchange.toml` | single / independent / exchange：R=100，预算 192，4 进程约 5 分钟 |
+| `toy_exchange_random.toml` | 上一行的 random A/A 对照（random 忽略证据卡） |
+| `power/*.toml` | 功效分析用的 R=100 数据池（ES / random 预算 192；ES 预算 96、32） |
 | `auctionnet.example.toml` | 示例；**运行时必然报 `BackendNotIntegratedError`** |
+
+统计功效分析（只读产物）：
+
+```bash
+.venv/bin/python scripts/power_analysis.py --aa runs/power/power_random_b192-<时间戳> --es runs/power/power_es_b192-<时间戳>
+```
+
+完整参数（阳性对照、前缀一致性检查）见 [docs/POWER_ANALYSIS.md](docs/POWER_ANALYSIS.md)。
 
 ## 产物
 
@@ -75,6 +90,7 @@ python3.11 -m venv .venv
 | `candidates.jsonl` | 每个候选的谱系与训练 fitness（parent_id、operator、params、normalized、sigma、info_sources…） |
 | `episodes.jsonl` | 训练与验证阶段的每个 episode |
 | `anytime.jsonl` | 每轮结束时每个搜索者及模式整体的 best-so-far 与已用训练 episode 数 |
+| `exchange.jsonl` | exchange 模式下每轮每个搜索者收到的卡片与采纳结果（其他模式为空文件） |
 | `budget.json` | 预算账本：planned / used / failed / timeouts / retries |
 | `selected/<replicate>_<mode>.json` | 固定下来的选定策略：spec、spec_hash、候选短名单与验证分、选择规则 |
 | `summary.csv` | 每个 (replicate, 模式/基线) 一行 |
@@ -90,7 +106,7 @@ python3.11 -m venv .venv
 .venv/bin/python -m pytest
 ```
 
-核心测试总耗时约 2 秒。`test_kernel_compat.py::test_kernel_compiles_on_real_python39` 只在 PATH 上有 `python3.9` 时运行，否则跳过。
+核心测试总耗时约 3 秒。`test_kernel_compat.py::test_kernel_compiles_on_real_python39` 只在 PATH 上有 `python3.9` 时运行，否则跳过。
 
 ## 目录结构
 
@@ -99,15 +115,17 @@ src/bidswarm/
   cli.py, config.py, types.py, experiment.py, diagnostics.py
   kernel/        可移植策略内核（Python 3.9，numpy + 标准库）：spec.py, policies.py, registry.py
   environments/  base.py, toy.py, auctionnet.py（占位，构造即报错）
-  search/        proposers.py, worker.py, coordinator.py, exchange.py
+  search/        proposers.py, worker.py, coordinator.py, exchange.py（NoExchange / ShareBest）
   evaluation/    metrics.py, splits.py, budget.py, runner.py, selection.py
   artifacts/     store.py, report.py
-configs/  tests/  docs/
+configs/  configs/power/  scripts/power_analysis.py  tests/  docs/
 ```
 
 ## 文档
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：寻找策略与执行策略的分离、模块边界、轮次调度、toy 环境
-- [docs/EXPERIMENT_PROTOCOL.md](docs/EXPERIMENT_PROTOCOL.md)：预算、配对设计、选择规则、测试隔离、统计方法
+- [docs/EXPERIMENT_PROTOCOL.md](docs/EXPERIMENT_PROTOCOL.md)：预算、配对设计、选择规则、测试隔离、信息交换、统计方法
+- [docs/POWER_ANALYSIS.md](docs/POWER_ANALYSIS.md)：A/A 校准、最小可检出效应、阳性对照、R 的选择
+- [docs/TOY_RESULTS.md](docs/TOY_RESULTS.md)：已跑过的 toy 实验记录（R = 20 对照、功效数据池、信息交换实验）
 - [docs/AUCTIONNET_INTEGRATION.md](docs/AUCTIONNET_INTEGRATION.md)：已核实的上游事实、开放问题、接入计划
 - [docs/ROADMAP.md](docs/ROADMAP.md)：后续方向

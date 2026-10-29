@@ -35,6 +35,8 @@ from bidswarm.artifacts.store import RunStore
 from bidswarm.evaluation.selection import candidate_fitness
 
 N_SIM = 2000  # simulated experiments per design size
+N_SIM_PERM = 500  # simulated experiments for the (more expensive) permutation-test calibration
+PERM_FLIPS = 2000  # sign flips per simulated permutation test
 SIM_SEED = 12345
 DESIGN_SIZES = (20, 50, 100)
 Z_975, Z_80 = 1.959964, 0.841621
@@ -95,6 +97,16 @@ def simulate_cis(pool: np.ndarray, size: int, seed: int) -> np.ndarray:
     return out
 
 
+def permutation_fpr(pool: np.ndarray, size: int, seed: int, alpha: float = 0.05) -> float:
+    """Rejection rate of the sign-flip permutation test on experiments drawn from a null pool."""
+    rng = np.random.default_rng(seed)
+    hits = 0
+    for s in range(N_SIM_PERM):
+        d = pool[rng.integers(0, pool.size, size)]
+        hits += paired_sign_flip_pvalue(d, resamples=PERM_FLIPS, seed=seed + s) <= alpha
+    return hits / N_SIM_PERM
+
+
 def rejection_rate(cis: np.ndarray, shift: float = 0.0) -> float:
     lo, hi = cis[:, 0] + shift, cis[:, 1] + shift  # percentile CI is shift-equivariant
     return float(np.mean((lo > 0) | (hi < 0)))
@@ -105,6 +117,11 @@ def mde(cis: np.ndarray, target: float = 0.8, step: float = 0.01) -> float:
     while rejection_rate(cis, shift) < target:
         shift += step
     return shift
+
+
+def fmt_p(p: float) -> str:
+    """The smallest attainable Monte Carlo p is 1/(flips+1), so never print 0."""
+    return "< 0.0001" if p < 1e-4 else f"{p:.4f}"
 
 
 def table(header, rows) -> str:
@@ -151,15 +168,21 @@ def main() -> None:
 
     # 2. calibration
     pool_aa = d_aa - d_aa.mean()
-    print("## 2. 校准：报告 CI 的假阳性率（真实差为 0）\n")
+    print("## 2. 校准：真实差为 0 时的假阳性率（名义 0.05）\n")
     rows = []
     cis_by_size = {}
     for size in DESIGN_SIZES:
         cis_by_size[size] = simulate_cis(pool_aa, size, SIM_SEED + size)
         fpr = rejection_rate(cis_by_size[size])
         mc_se = math.sqrt(fpr * (1 - fpr) / N_SIM)
-        rows.append([size, f"{fpr:.3f} ± {mc_se:.3f}", "0.050"])
-    print(table(["R", "假阳性率（± 蒙特卡洛标准误）", "名义值"], rows))
+        perm = permutation_fpr(pool_aa, size, SIM_SEED + 500 + size)
+        perm_se = math.sqrt(perm * (1 - perm) / N_SIM_PERM)
+        rows.append([size, f"{fpr:.3f} ± {mc_se:.3f}", f"{perm:.3f} ± {perm_se:.3f}"])
+    print(table(["R", f"bootstrap CI 不含 0（{N_SIM} 次模拟）", f"置换检验 p ≤ 0.05（{N_SIM_PERM} 次模拟）"], rows))
+    print(
+        "\n模拟实验从去中心化的 A/A 配对差中有放回抽取，因此真实效应为 0；"
+        "± 为蒙特卡洛标准误。"
+    )
     print()
 
     # 3. ES power
@@ -208,7 +231,7 @@ def main() -> None:
                         f"{d.mean():+.3f}",
                         f"{d.std(ddof=1):.3f}",
                         f"[{ci[0]:+.3f}, {ci[1]:+.3f}]",
-                        f"{paired_sign_flip_pvalue(d):.4f}",
+                        fmt_p(paired_sign_flip_pvalue(d)),
                         f"{power20:.2f}",
                     ]
                 )

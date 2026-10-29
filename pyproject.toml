@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bidswarm-lab"
-version = "0.1.0"
-description = "Experiment framework for swarm-style search over auto-bidding policies (toy backend only in v0.1)."
+version = "0.2.0"
+description = "Experiment framework for swarm-style search over auto-bidding policies (toy backend only)."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.24"]

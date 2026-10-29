@@ -151,7 +151,8 @@ def test_exchange_info_sources_only_own_or_delivered(exchange_run: Path):
 def test_exchange_budget_matches_independent(exchange_run: Path):
     budget = json.loads((exchange_run / "budget.json").read_text())
     train = {(e["replicate"], e["group"]): e for e in budget["entries"] if e["phase"] == "train"}
-    for (rep, group), e in train.items():
+    assert {group for _, group in train} == {"single", "independent", "exchange"}
+    for (rep, _), e in train.items():
         assert e["used"] == e["planned"] == train[(rep, "independent")]["planned"]
     report = (exchange_run / "report.md").read_text()
     assert "exchange − independent" in report and "exchange − single" in report

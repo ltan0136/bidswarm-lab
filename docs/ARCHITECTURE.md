@@ -8,7 +8,7 @@
  │ Coordinator（普通程序，不是大模型）               │      │ bidswarm.kernel                  │
  │   ├─ SearchWorker × N  ── Proposer（ES / 随机）   │ spec │   PolicySpec = name + params     │
  │   ├─ BudgetLedger（静态扣预算）                   │ ───▶ │   FixedRatePolicy / DualControl  │
- │   ├─ ExchangePolicy（v1: NoExchange）             │ JSON │   bidding(8 个 AuctionNet 参数)  │
+ │   ├─ ExchangePolicy（NoExchange / ShareBest）     │ JSON │   bidding(8 个 AuctionNet 参数)  │
  │   └─ 选择 / 测试隔离 / 产物写入                    │      │   Python 3.9 + numpy + 标准库    │
  └─────────────────────────────────────────────────┘      └──────────────────────────────────┘
 ```
@@ -27,7 +27,7 @@
 | `kernel/` | `PolicySpec`、校验、`spec_hash`、策略模板、归一化空间互转 | **兼容 Python 3.9**；只依赖 numpy + 标准库；不导入 `bidswarm` 其他子包 |
 | `environments/` | 后端接口 `Environment`；`toy` 实现；`auctionnet` 占位（构造即抛 `BackendNotIntegratedError`） | 只依赖 kernel 外的 `types`、`evaluation.metrics` |
 | `evaluation/` | 评分公式复刻、场景划分、预算换算与账本、episode 任务函数与执行器、选择规则 | 任务函数是纯函数，可在 spawn 子进程运行 |
-| `search/` | proposer、worker（搜索者）、coordinator（轮次调度）、exchange 接口 | 不读取验证 / 测试场景 |
+| `search/` | proposer、worker（搜索者）、coordinator（轮次调度）、exchange（NoExchange / ShareBest） | 不读取验证 / 测试场景；交换只在主进程、轮次边界进行 |
 | `artifacts/` | 运行目录、严格 JSON 写入、只读产物的报告生成 | 报告不访问内存状态 |
 | `experiment.py` | `run`（搜索 + 验证选择）与 `evaluate`（测试）的编排 | 测试只在 `evaluate` 中出现 |
 | `cli.py` | `doctor / run / evaluate / report` | — |
@@ -47,8 +47,9 @@ for round r = 0, 1, ...:                       # 所有 (replicate, mode) 共用
   ④ EpisodeExecutor.run(tasks)  # 串行或 ProcessPoolExecutor(spawn)；结果按 task_index 排序
   ⑤ 每个候选 fitness = 训练场景主指标均值（任一 episode 失败 → null）
   ⑥ 每个搜索者只 observe 自己候选的结果
-  ⑦ ExchangePolicy.exchange(r, 本轮证据卡)  # v1: NoExchange，什么也不送达
-  ⑧ 写 candidates.jsonl / episodes.jsonl / anytime.jsonl
+  ⑦ ExchangePolicy.exchange(r, 本轮证据卡)  # single/independent: NoExchange；exchange: ShareBest
+     每个搜索者 receive_evidence(送达卡片) → proposer.receive → 可能采纳外来父代
+  ⑧ 写 candidates.jsonl / episodes.jsonl / anytime.jsonl / exchange.jsonl
 搜索结束 → 每个 (replicate, mode) 取训练 top-K → 验证场景评估 → 固定 selected/<replicate>_<mode>.json
 （evaluate 命令另行读取 selected/ 并在测试场景上评估）
 ```
@@ -58,6 +59,19 @@ for round r = 0, 1, ...:                       # 所有 (replicate, mode) 共用
   （有测试覆盖）。
 - 子进程使用 spawn 上下文，与 Windows 行为一致；`python -m bidswarm` 的入口有 `__main__` 守卫。
 
+### 信息交换的数据流
+
+```
+round r 结束：worker w 的本轮候选 ──EvidenceCard──▶ ShareBest（记住每个搜索者的 best-so-far）
+                                                     │  topology=all：送达其他所有搜索者的 best
+                                                     │  topology=ring：送达 w−1 的 best
+round r+1 开始前：worker w ◀── 送达卡片 ── receive_evidence：校验卡片来自同一 (replicate, mode) 的其他搜索者
+                    └─ EsProposer.receive：卡片 ID 计入 info_sources；严格更优则采纳为父代（σ 不变）
+```
+
+证据卡只携带数据（candidate_id、来源搜索者、轮次、spec_hash、fitness、归一化坐标），不携带代码；
+交换不产生 episode，因此不进账本。worker 在 `propose` 时检查 `info_sources` 只含自己的候选或已送达的卡片。
+
 ### 随机数
 
 | 用途 | 来源 |
@@ -65,7 +79,7 @@ for round r = 0, 1, ...:                       # 所有 (replicate, mode) 共用
 | 场景种子 | `sha256("bidswarm-scenario:<master_seed>:<split>:<index>")` 取 63 位 |
 | 广告主（budget / cpa_target / category） | `default_rng([scenario_seed, 2**31 − 1])` |
 | 第 t 步的流量与均匀数 | `default_rng([scenario_seed, t])`，固定抽取顺序，与策略无关（CRN） |
-| 搜索者 | `sha256("bidswarm-proposer:<master_seed>:<mode>:<worker_id>")` 派生，模式之间互相独立 |
+| 搜索者 | `sha256("bidswarm-proposer:<master_seed>:<mode>:<worker_id>")` 派生，模式之间互相独立（exchange 与 independent 的搜索者也各用各的流） |
 
 ## 4. toy 环境
 

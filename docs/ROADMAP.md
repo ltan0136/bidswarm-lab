@@ -1,6 +1,7 @@
 # 路线图
 
-v0.1 只建工程底座和"独立搜索"对照组。以下方向都**尚未实现**，排列大致按依赖顺序。
+v0.1 建了工程底座和"独立搜索"对照组；v0.2 加入统计功效分析与最小的信息交换。除第 1 节已注明的部分外，
+以下方向都**尚未实现**，排列大致按依赖顺序。
 每一项都应保持当前协议：同一预算单位、配对场景、训练 / 验证 / 测试隔离、产物驱动的报告。
 
 ## 0. 前置：AuctionNet 接入
@@ -10,13 +11,18 @@ v0.1 只建工程底座和"独立搜索"对照组。以下方向都**尚未实�
 
 ## 1. 信息交换
 
-- 已有接口：`search/exchange.py` 中的 `ExchangePolicy.exchange(round_index, outgoing)` 在每轮边界被调用；
-  `EvidenceCard` 只有最小字段（candidate_id、source_worker、round、spec_hash、fitness）；`NoExchange` 什么也不送达；
-  `SearchWorker.receive_evidence` 在 v1 中收到任何卡片都会报错。
-- 待做：定义交换拓扑（全连接、环、随机配对）、共享内容（最优 spec、失败区域、步长）、
-  proposer 如何使用外来证据（例如作为候选父代或调整 σ）。
-- 谱系的 `info_sources` 字段届时将记录外来候选 ID，用于分析信息流向；隔离测试需要相应改为"只含允许的来源"。
-- 需要新的对照：交换 vs 不交换，在相同训练 episode 预算下比较。
+**v0.2 已实现最小版本**：`exchange` 模式 + `ShareBest`（精英迁移，拓扑 `all` / `ring`），ES 采纳严格更优的外来父代；
+送达与采纳写入 `exchange.jsonl`，`info_sources` 只允许自己的候选或已送达的卡片。语义见
+[EXPERIMENT_PROTOCOL.md](EXPERIMENT_PROTOCOL.md) 第 6 节；实验 `configs/toy_exchange.toml`（R = 100）
+及其 random A/A 对照 `configs/toy_exchange_random.toml`。
+
+尚未做：
+
+- 其他共享内容：失败区域、步长 σ、整批候选而非只有 best；交换间隔（每 m 轮一次）；随机配对拓扑。
+- 交换的代价：目前交换免费；若要模拟通信 / 协调成本，需要在账本中增加单独的预算维度。
+- 多样性保护：`all` 拓扑下所有搜索者会很快收敛到同一父代，可加入迁移概率或"只在明显更优时采纳"的阈值。
+- 更强的检验：若交换效应与"训练预算加倍"相当（toy 上约 1.5 分）或更小，需要 R ≥ 100 才有约 80% 功效
+  （见 [POWER_ANALYSIS.md](POWER_ANALYSIS.md)）；比较多种拓扑时要控制多重比较。
 
 ## 2. LLM proposer
 
