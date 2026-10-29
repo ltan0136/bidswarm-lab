@@ -28,6 +28,7 @@ from .artifacts.store import (
     BUDGET,
     CANDIDATES,
     EPISODES,
+    EXCHANGES,
     MANIFEST,
     SCENARIOS,
     TEST_EPISODES,
@@ -138,7 +139,7 @@ def run_experiment(
     store = RunStore.create(out_root, config.name)
     store.write_json(MANIFEST, _manifest(config, store.run_dir, config_path, serial, max_workers))
     store.write_json(SCENARIOS, {"backend": config.backend, "replicates": [s.to_dict() for s in split_sets]})
-    for relpath in (CANDIDATES, EPISODES, ANYTIME):
+    for relpath in (CANDIDATES, EPISODES, ANYTIME, EXCHANGES):
         store.write_text(relpath, "")
 
     ledger = BudgetLedger()

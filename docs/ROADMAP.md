@@ -10,13 +10,10 @@ v0.1 只建工程底座和"独立搜索"对照组。以下方向都**尚未实�
 
 ## 1. 信息交换
 
-- 已有接口：`search/exchange.py` 中的 `ExchangePolicy.exchange(round_index, outgoing)` 在每轮边界被调用；
-  `EvidenceCard` 只有最小字段（candidate_id、source_worker、round、spec_hash、fitness）；`NoExchange` 什么也不送达；
-  `SearchWorker.receive_evidence` 在 v1 中收到任何卡片都会报错。
-- 待做：定义交换拓扑（全连接、环、随机配对）、共享内容（最优 spec、失败区域、步长）、
-  proposer 如何使用外来证据（例如作为候选父代或调整 σ）。
-- 谱系的 `info_sources` 字段届时将记录外来候选 ID，用于分析信息流向；隔离测试需要相应改为"只含允许的来源"。
-- 需要新的对照：交换 vs 不交换，在相同训练 episode 预算下比较。
+- 已实现：`cooperative` 模式 = `RingExchange`（每 `exchange_interval` 轮把各自的 best-so-far 送给环上下一个搜索者，
+  更优者取代 ES 父代）。`info_sources` 记录外来候选 ID，`exchanges.jsonl` 记录每次送达，
+  报告给出 `cooperative − independent` 的配对比较（同预算、同随机数流）。
+- 待做：其他拓扑（全连接、随机配对）、转发外来精英、共享失败区域或步长（σ）、按迁移间隔与 N 做扫描。
 
 ## 2. LLM proposer
 

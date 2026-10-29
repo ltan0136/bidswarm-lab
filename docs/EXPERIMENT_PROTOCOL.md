@@ -66,7 +66,13 @@ rounds           = per_worker / k                               （k = candidate
 报告在 proposer = random 时会自动加注。
 
 对 ES（默认）而言，两种模式的差别在于：同样 24 个候选，single 是 1 条 12 轮的长链（首轮随机初始化），independent 是 4 条各 3 轮的短链。
-v0.1 只测量这一差别，不实现信息交换。
+
+`cooperative` 与 `independent` 使用同样的 N、预算和 proposer 随机数流（共同随机数），首轮候选完全相同；
+区别只在每 `exchange_interval` 轮后的环形迁移：每个搜索者把自己（不含外来）的 best-so-far 送给环上的下一个搜索者，
+接收方若发现它优于当前 ES 父代就换作父代，σ 保持不变。迁移不消耗 episode，最后一轮之后不迁移，同一张卡不重复送达。
+迁移只在同一 (replicate, mode) 内发生，`SearchWorker` 拒绝来自其他 replicate、其他模式或自己的卡片。
+外来候选 ID 进入接收方后续候选的 `info_sources`，每次送达记录在 `exchanges.jsonl`。
+在 random proposer 下迁移不影响采样，cooperative 与 independent 同样在分布上等价。
 
 ## 6. Anytime 曲线
 
@@ -77,7 +83,7 @@ independent 每轮 32 个 → 检查点 32 / 64 / 96）。
 ## 7. 统计与报告
 
 - 每个 replicate 先对测试场景取均值，再对 replicate 报告均值 ± 样本标准差（ddof = 1）。
-- 配对差 `independent − single`：对 replicate 做百分位 bootstrap，10000 次重采样，固定种子 20261030，报告 95% 置信区间。
+- 配对差 `independent − single` 与 `cooperative − independent`（两种模式都在本次运行中时）：对 replicate 做百分位 bootstrap，10000 次重采样，固定种子 20261030，报告 95% 置信区间。
   replicate 数小于 2 时不报告区间；小于 10 时报告会提示区间粗糙。
 - 赢家诅咒：对选定策略报告"验证分 − 测试分"的均值 ± 标准差。
 - 报告只从产物生成，删除 `report.md` 后 `report` 命令可逐字重建；没有改善也如实显示。

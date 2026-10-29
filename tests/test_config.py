@@ -94,6 +94,9 @@ def test_unknown_keys_and_sections_rejected():
         {"search": {"proposer": "llm"}},
         {"search": {"modes": ["single", "swarm"]}},
         {"search": {"independent_workers": 1}},
+        {"search": {"modes": ["cooperative"], "independent_workers": 1}},
+        {"search": {"exchange_interval": 0}},
+        {"search": {"exchange_interval": 1.5}},
         {"selection": {"top_k": 9}},  # pool has 8 candidates
         {"runtime": {"episode_timeout_s": 0}},
         {"experiment": {"replicates": 0}},
@@ -110,3 +113,13 @@ def test_missing_required_key_rejected():
     del data["search"]["train_episode_budget"]
     with pytest.raises(ConfigError, match="missing key"):
         ExperimentConfig.from_dict(data)
+
+
+def test_cooperative_mode_uses_independent_budget_and_canonical_order():
+    cfg = small_config(search={"modes": ["cooperative", "single", "independent"], "exchange_interval": 2})
+    assert cfg.search.modes == ("single", "independent", "cooperative")
+    assert cfg.search.exchange_interval == 2
+    assert cfg.budget_plan("cooperative").to_dict() | {"mode": "x"} == cfg.budget_plan("independent").to_dict() | {
+        "mode": "x"
+    }
+    assert small_config().search.exchange_interval == 1

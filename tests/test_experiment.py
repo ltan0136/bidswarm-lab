@@ -320,3 +320,59 @@ def test_overlapping_splits_are_rejected():
         check_disjoint(SplitSet(0, 0, train=(a,), validation=({"scenario_id": "b", "seed": 1},), test=()))
     with pytest.raises(SplitOverlapError, match="id"):
         check_disjoint(SplitSet(0, 0, train=(a,), validation=(), test=({"scenario_id": "a", "seed": 2},)))
+
+
+# ------------------------------------------------------------------ cooperative mode
+def test_cooperative_mode_migrates_within_its_pipeline_only(tmp_path: Path):
+    config = small_config(search={"modes": ["single", "independent", "cooperative"]})
+    run_dir = run_experiment(config, out_root=tmp_path / "a", serial=True)
+    deliveries = read_jsonl(run_dir / "exchanges.jsonl")
+    candidates = {c["candidate_id"]: c for c in read_jsonl(run_dir / "candidates.jsonl")}
+
+    # 2 rounds per worker: one migration after round 0, none after the last round.
+    assert deliveries and {d["round"] for d in deliveries} == {0}
+    assert {d["mode"] for d in deliveries} == {"cooperative"}
+    received = defaultdict(set)
+    for d in deliveries:
+        sent = candidates[d["candidate_id"]]
+        assert (sent["replicate"], sent["mode"], sent["worker_id"]) == (d["replicate"], "cooperative", d["from_worker"])
+        assert d["to_worker"] == (d["from_worker"] + 1) % 2 and d["fitness"] == sent["fitness"]
+        received[(d["replicate"], d["to_worker"])].add((d["candidate_id"], d["round"]))
+
+    for c in candidates.values():
+        own = (c["replicate"], c["mode"], c["worker_id"])
+        for src in c["info_sources"]:
+            other = candidates[src]
+            if (other["replicate"], other["mode"], other["worker_id"]) == own:
+                assert other["round"] < c["round"]
+            else:  # only a card migrated to this worker before this round
+                assert c["mode"] == "cooperative"
+                assert any(cid == src and r < c["round"] for cid, r in received[(c["replicate"], c["worker_id"])])
+
+    # Migration is free: every mode spends exactly the same training budget.
+    train = [e for e in json.loads((run_dir / "budget.json").read_text())["entries"] if e["phase"] == "train"]
+    assert {e["group"] for e in train} == {"single", "independent", "cooperative"}
+    assert {(e["planned"], e["used"]) for e in train} == {(16, 16)}
+
+    rerun = run_experiment(config, out_root=tmp_path / "b", serial=True)
+    assert (run_dir / "exchanges.jsonl").read_text() == (rerun / "exchanges.jsonl").read_text()
+    assert (run_dir / "candidates.jsonl").read_text() == (rerun / "candidates.jsonl").read_text()
+
+    evaluate_run(run_dir, serial=True)
+    report = (run_dir / "report.md").read_text(encoding="utf-8")
+    assert "### independent − single" in report and "### cooperative − independent" in report
+    assert f"本次共 {len(deliveries)} 次送达" in report
+
+
+def test_independent_runs_record_no_exchanges(small_run_dir: Path):
+    assert (small_run_dir / "exchanges.jsonl").read_text() == ""
+
+
+def test_cooperative_shares_independent_random_streams_until_migration(tmp_path: Path):
+    config = small_config(search={"modes": ["independent", "cooperative"]})
+    run_dir = run_experiment(config, out_root=tmp_path, serial=True)
+    by_key = defaultdict(dict)
+    for c in read_jsonl(run_dir / "candidates.jsonl"):
+        by_key[(c["replicate"], c["worker_id"], c["round"], c["candidate_id"][-5:])][c["mode"]] = c["normalized"]
+    first_round = [v for (_, _, round_, _), v in by_key.items() if round_ == 0]
+    assert first_round and all(v["independent"] == v["cooperative"] for v in first_round)

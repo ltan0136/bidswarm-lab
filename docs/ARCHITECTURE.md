@@ -8,7 +8,7 @@
  │ Coordinator（普通程序，不是大模型）               │      │ bidswarm.kernel                  │
  │   ├─ SearchWorker × N  ── Proposer（ES / 随机）   │ spec │   PolicySpec = name + params     │
  │   ├─ BudgetLedger（静态扣预算）                   │ ───▶ │   FixedRatePolicy / DualControl  │
- │   ├─ ExchangePolicy（v1: NoExchange）             │ JSON │   bidding(8 个 AuctionNet 参数)  │
+ │   ├─ ExchangePolicy（NoExchange / RingExchange）  │ JSON │   bidding(8 个 AuctionNet 参数)  │
  │   └─ 选择 / 测试隔离 / 产物写入                    │      │   Python 3.9 + numpy + 标准库    │
  └─────────────────────────────────────────────────┘      └──────────────────────────────────┘
 ```
@@ -47,8 +47,8 @@ for round r = 0, 1, ...:                       # 所有 (replicate, mode) 共用
   ④ EpisodeExecutor.run(tasks)  # 串行或 ProcessPoolExecutor(spawn)；结果按 task_index 排序
   ⑤ 每个候选 fitness = 训练场景主指标均值（任一 episode 失败 → null）
   ⑥ 每个搜索者只 observe 自己候选的结果
-  ⑦ ExchangePolicy.exchange(r, 本轮证据卡)  # v1: NoExchange，什么也不送达
-  ⑧ 写 candidates.jsonl / episodes.jsonl / anytime.jsonl
+  ⑦ ExchangePolicy.exchange(r, 本轮证据卡)  # NoExchange 什么也不送达；cooperative 用 RingExchange 环形迁移
+  ⑧ 写 candidates.jsonl / episodes.jsonl / anytime.jsonl / exchanges.jsonl
 搜索结束 → 每个 (replicate, mode) 取训练 top-K → 验证场景评估 → 固定 selected/<replicate>_<mode>.json
 （evaluate 命令另行读取 selected/ 并在测试场景上评估）
 ```

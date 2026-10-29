@@ -2,10 +2,14 @@
 
 Interface: ``propose(k, rng)`` returns k proposals, then ``observe(results)``
 receives the fitness of exactly those proposals (the proposer's own results).
+Between rounds, ``receive(foreign)`` may hand over candidates another searcher
+evaluated (``cooperative`` mode only).
 
 * ``EsProposer`` - (1+lambda)-ES with lambda = k and the 1/5th-style step
   rule: sigma *= success_factor after a round with an improving child,
   otherwise sigma *= failure_factor, clamped to [sigma_min, sigma_max].
+  A received candidate that beats the current parent replaces it; sigma is
+  kept, since it reflects this searcher's own success history.
 * ``RandomProposer`` - independent uniform sampling, a control only. Under
   random sampling ``single`` and ``independent`` are equal in distribution, so
   comparing them is only a correctness check.
@@ -64,6 +68,9 @@ class Proposer(ABC):
     @abstractmethod
     def observe(self, own_results: Sequence[Observation]) -> None:
         ...
+
+    def receive(self, foreign: Sequence[Observation]) -> None:
+        """Candidates evaluated by other searchers. The default ignores them."""
 
     def _uniform(self, k: int, rng: np.random.Generator) -> list[tuple[float, ...]]:
         return [tuple(float(x) for x in row) for row in rng.random((k, self.dim))]
@@ -128,6 +135,18 @@ class EsProposer(Proposer):
                 self.sigma *= self.es.failure_factor
             self.sigma = min(max(self.sigma, self.es.sigma_min), self.es.sigma_max)
         self._pending = None
+
+    def receive(self, foreign: Sequence[Observation]) -> None:
+        if self._pending is not None:
+            raise RuntimeError("receive() called between propose() and observe()")
+        if not foreign:
+            return
+        # Every received card was compared against the parent, so all of them shaped
+        # the next proposals and belong in their info_sources.
+        self._seen.extend(o.candidate_id for o in foreign)
+        best = _best(foreign)
+        if best is not None and (self.parent is None or best.fitness > self.parent.fitness):
+            self.parent = best
 
 
 def make_proposer(name: str, dim: int, es: EsConfig) -> Proposer:
