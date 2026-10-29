@@ -1,0 +1,51 @@
+# BidSwarm Lab - toy experiment (independent vs single, R = 20).
+# Purpose: framework-level comparison on the built-in toy backend only.
+# Results say nothing about AuctionNet or real revenue.
+
+[experiment]
+name = "toy_experiment"
+seed = 20261030
+replicates = 20
+
+[environment]
+backend = "toy"
+num_time_steps = 48
+opportunities_per_step = 300
+budget_range = [400.0, 1200.0]
+cpa_target_range = [6.0, 12.0]
+num_categories = 5
+pvalue_beta = [2.0, 98.0]        # pValue ~ Beta(a, b), mean 0.02
+sigma_ratio_range = [0.1, 0.5]   # pValueSigma = ratio * pValue
+exposure_prob = 0.8
+price_scale = 0.15               # least_winning_cost scale at the mean pValue
+price_pvalue_elasticity = 0.8
+price_noise_sigma = 0.5          # log-normal noise of least_winning_cost
+price_time_amplitude = 0.3       # sinusoidal time-of-day price factor
+
+[splits]
+train = 4
+validation = 8
+test = 16
+
+[search]
+policy = "dual_control"
+proposer = "es"
+modes = ["single", "independent"]
+independent_workers = 4
+candidates_per_round = 2
+# 192 / 4 train scenarios = 48 candidates; single: 24 rounds, independent: 12 per worker, 6 rounds
+train_episode_budget = 192
+fitness_metric = "score_expected"
+
+[search.es]
+sigma_init = 0.2
+sigma_min = 0.01
+sigma_max = 0.5
+success_factor = 1.22
+failure_factor = 0.82
+
+[selection]
+top_k = 4
+
+[runtime]
+episode_timeout_s = 120.0

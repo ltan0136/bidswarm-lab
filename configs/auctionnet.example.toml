@@ -1,0 +1,36 @@
+# BidSwarm Lab - AuctionNet backend EXAMPLE (not runnable yet).
+#
+# The AuctionNet adapter is not implemented (integration_status = not_integrated).
+# `python -m bidswarm run --config configs/auctionnet.example.toml` must fail with
+# BackendNotIntegratedError; it never falls back to the toy backend.
+# See docs/AUCTIONNET_INTEGRATION.md.
+
+[experiment]
+name = "auctionnet_example"
+seed = 20261029
+replicates = 3
+
+[environment]
+backend = "auctionnet"
+repo_path = "/path/to/AuctionNet"   # local checkout; not cloned or downloaded by this project
+commit_sha = ""                     # must be pinned and re-verified before adapting
+evaluation_path = "offline"         # "offline" (strategy_train_env/main/main_test.py) or "online" (simul_bidding_env)
+python_executable = "python3.9"     # upstream environment is Python 3.9.12
+num_time_steps = 48                 # unverified, see open questions
+
+[splits]
+train = 4
+validation = 4
+test = 4
+
+[search]
+policy = "dual_control"
+proposer = "es"
+modes = ["single", "independent"]
+independent_workers = 4
+candidates_per_round = 2
+train_episode_budget = 96
+fitness_metric = "score_expected"
+
+[selection]
+top_k = 4
