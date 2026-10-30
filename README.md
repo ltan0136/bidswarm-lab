@@ -66,7 +66,7 @@ python3.11 -m venv .venv
 
 | 配置 | 用途 |
 |---|---|
-| `toy_smoke.toml` | 冒烟测试：R=3，预算 96，单机串行约 10 秒 |
+| `toy_smoke.toml` | 冒烟测试：R=3，预算 96，三种模式；run + evaluate 串行约 13 秒，4 进程约 5 秒 |
 | `toy_experiment.toml` | toy 上的三模式对照：R=20，预算 192（只够检出 ≥ 3.5 分的效应） |
 | `toy_experiment_random.toml` | 上一行的 random A/A 对照（各模式在分布上等价） |
 | `toy_cooperative.toml` | 同 `toy_experiment.toml`，但 R=100（比较迁移效果用），4 进程约 5 分钟 |
