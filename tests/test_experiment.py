@@ -376,3 +376,12 @@ def test_cooperative_shares_independent_random_streams_until_migration(tmp_path:
         by_key[(c["replicate"], c["worker_id"], c["round"], c["candidate_id"][-5:])][c["mode"]] = c["normalized"]
     first_round = [v for (_, _, round_, _), v in by_key.items() if round_ == 0]
     assert first_round and all(v["independent"] == v["cooperative"] for v in first_round)
+
+
+def test_replicate_results_do_not_depend_on_number_of_replicates(small_run_dir: Path, tmp_path: Path):
+    """Replicate r is a pure function of (config, master_seed r): a short run is a prefix of a long one."""
+    short = run_experiment(small_config(experiment={"replicates": 1}), out_root=tmp_path, serial=True)
+    for name in ("00_single.json", "00_independent.json"):
+        assert (short / "selected" / name).read_text() == (small_run_dir / "selected" / name).read_text()
+    long_candidates = [c for c in read_jsonl(small_run_dir / "candidates.jsonl") if c["replicate"] == 0]
+    assert read_jsonl(short / "candidates.jsonl") == long_candidates

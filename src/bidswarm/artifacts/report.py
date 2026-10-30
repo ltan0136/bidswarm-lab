@@ -33,6 +33,10 @@ from .store import (
 BOOTSTRAP_RESAMPLES = 10_000
 BOOTSTRAP_SEED = 20261030
 BOOTSTRAP_ALPHA = 0.05
+PERMUTATION_RESAMPLES = 20_000
+PERMUTATION_SEED = 20261031
+# Below this many pairs the percentile bootstrap is noticeably anti-conservative (docs/POWER_ANALYSIS.md).
+SMALL_SAMPLE_PAIRS = 30
 
 SUMMARY_COLUMNS = (
     "replicate",
@@ -78,6 +82,43 @@ def paired_bootstrap_ci(
     means = d[idx].mean(axis=1)
     lo, hi = np.percentile(means, [100 * alpha / 2, 100 * (1 - alpha / 2)])
     return float(lo), float(hi)
+
+
+def paired_sign_flip_pvalue(
+    diffs: Sequence[float], resamples: int = PERMUTATION_RESAMPLES, seed: int = PERMUTATION_SEED
+) -> float | None:
+    """Two-sided paired sign-flip permutation p-value for H0: mean difference 0.
+
+    Exact (up to Monte Carlo error) when the differences are symmetric about 0
+    under H0, e.g. when the two arms are exchangeable.
+    """
+    d = np.asarray(diffs, dtype=float)
+    if d.size < 2:
+        return None
+    rng = np.random.default_rng(seed)
+    signs = rng.choice((-1.0, 1.0), size=(resamples, d.size))
+    null = np.abs((signs * d).mean(axis=1))
+    observed = abs(float(d.mean()))
+    hits = int(np.sum(null >= observed * (1 - 1e-12)))
+    return (hits + 1) / (resamples + 1)
+
+
+def holm_adjust(pvalues: Sequence[float | None]) -> list[float | None]:
+    """Holm step-down adjusted p-values (family = the non-None entries)."""
+    idx = sorted((i for i, p in enumerate(pvalues) if p is not None), key=lambda i: pvalues[i])
+    out: list[float | None] = [None] * len(pvalues)
+    running = 0.0
+    for rank, i in enumerate(idx):
+        running = max(running, min(1.0, (len(idx) - rank) * pvalues[i]))
+        out[i] = running
+    return out
+
+
+def _fmt_p(p: float | None) -> str:
+    """Monte Carlo p-values are never 0; show their resolution instead."""
+    if p is None:
+        return "—"
+    return "< 0.001" if p < 1e-3 else f"{p:.3f}"
 
 
 def _fmt(x: float | None, nd: int = 3) -> str:
@@ -303,48 +344,60 @@ def _section_paired(view: _RunView) -> list[str]:
         return lines + ["尚未执行 `evaluate`，暂无测试结果。"]
     lines.append(
         f"同一 replicate 内各模式共用同一组场景，差值按 replicate 配对。"
-        f"置信区间为百分位 bootstrap（对 replicate 重采样 {BOOTSTRAP_RESAMPLES} 次，固定种子 {BOOTSTRAP_SEED}）。"
+        f"置信区间为百分位 bootstrap（对 replicate 重采样 {BOOTSTRAP_RESAMPLES} 次，固定种子 {BOOTSTRAP_SEED}）；"
+        f"p 值为配对符号翻转置换检验（{PERMUTATION_RESAMPLES} 次，固定种子 {PERMUTATION_SEED}）。"
         "independent − single 只改变搜索者数；cooperative − independent 只改变是否迁移。"
     )
-    for a_mode, b_mode in pairs:
+    if len(pairs) > 1:
+        lines.append(
+            f"有 {len(pairs)} 个比较时，对主指标的置换检验 p 做 Holm 校正；只有未校正 CI 不含 0 且校正后 p ≤ 0.05 "
+            "时，自动结论才判定\"高于 / 低于\"。"
+        )
+    primary_p = [paired_sign_flip_pvalue(_paired_diffs(view, view.metric, a, b)) for a, b in pairs]
+    holm = holm_adjust(primary_p) if len(pairs) > 1 else [None] * len(pairs)
+    for (a_mode, b_mode), holm_p in zip(pairs, holm):
         lines += ["", f"### {a_mode} − {b_mode}", ""]
-        lines += _paired_pair(view, a_mode, b_mode)
+        lines += _paired_pair(view, a_mode, b_mode, holm_p, len(pairs))
     return lines
 
 
-def _paired_pair(view: _RunView, a_mode: str, b_mode: str) -> list[str]:
+def _paired_pair(
+    view: _RunView, a_mode: str, b_mode: str, holm_p: float | None = None, family: int = 1
+) -> list[str]:
     lines: list[str] = []
     rows = []
     primary_ci = None
+    primary_p = None
     primary_n = 0
     for metric in (view.metric, *[m for m in ("score_expected", "score_realized") if m != view.metric]):
         diffs = _paired_diffs(view, metric, a_mode, b_mode)
         ci = paired_bootstrap_ci(diffs)
-        if metric == view.metric:
-            primary_ci, primary_n = ci, len(diffs)
-        tag = "（主指标）" if metric == view.metric else ""
-        rows.append(
-            [
-                f"{metric}{tag}",
-                len(diffs),
-                _fmt(_mean(diffs)),
-                "—" if ci is None else f"[{_fmt(ci[0])}, {_fmt(ci[1])}]",
-            ]
-        )
-    lines += _table(["指标", "配对数 n", "差值均值", "95% bootstrap CI"], rows)
+        p = paired_sign_flip_pvalue(diffs)
+        primary = metric == view.metric
+        if primary:
+            primary_ci, primary_p, primary_n = ci, p, len(diffs)
+        row = [
+            f"{metric}{'（主指标）' if primary else ''}",
+            len(diffs),
+            _fmt(_mean(diffs)),
+            "—" if ci is None else f"[{_fmt(ci[0])}, {_fmt(ci[1])}]",
+            _fmt_p(p),
+        ]
+        if family > 1:
+            row.append(_fmt_p(holm_p) if primary else "—")
+        rows.append(row)
+    header = ["指标", "配对数 n", "差值均值", "95% bootstrap CI", "置换检验 p"]
+    if family > 1:
+        header.append(f"Holm 校正 p（{family} 个比较）")
+    lines += _table(header, rows)
     lines.append("")
-    if primary_ci is None:
-        verdict = f"配对样本不足（n={primary_n} < 2），无法给出置信区间。"
-    elif primary_ci[0] > 0:
-        verdict = f"主指标的 95% CI 不含 0 且为正：在本 toy 设置下，{a_mode} 的测试分高于 {b_mode}。"
-    elif primary_ci[1] < 0:
-        verdict = f"主指标的 95% CI 不含 0 且为负：在本 toy 设置下，{a_mode} 的测试分低于 {b_mode}。"
-    else:
-        verdict = f"主指标的 95% CI 包含 0：在本 toy 设置下未观察到 {a_mode} 与 {b_mode} 之间可分辨的差异。"
-    lines.append(f"结论（自动生成，仅描述上表）：{verdict}")
-    if primary_n < 10:
+    lines.append(f"结论（自动生成，仅描述上表）：{_verdict(a_mode, b_mode, primary_ci, primary_p, primary_n, holm_p, family)}")
+    if primary_n < SMALL_SAMPLE_PAIRS:
         lines.append("")
-        lines.append(f"注意：配对数只有 {primary_n}，bootstrap 区间很粗糙，不宜据此下结论。")
+        lines.append(
+            f"注意：配对数只有 {primary_n}（< {SMALL_SAMPLE_PAIRS}）。此时百分位 bootstrap 区间偏窄，"
+            "实际假阳性率高于名义 5%（实测见 docs/POWER_ANALYSIS.md），应同时参考置换检验 p 值。"
+        )
     if view.config["search"]["proposer"] == "random":
         lines.append("")
         why = "（随机采样不使用迁移来的候选）" if a_mode == "cooperative" else ""
@@ -353,6 +406,31 @@ def _paired_pair(view: _RunView, a_mode: str, b_mode: str) -> list[str]:
             "此比较只是正确性检查，不反映搜索方式的优劣。"
         )
     return lines
+
+
+def _verdict(
+    a: str,
+    b: str,
+    ci: tuple[float, float] | None,
+    p: float | None,
+    n: int,
+    holm: float | None = None,
+    family: int = 1,
+) -> str:
+    if ci is None or p is None:
+        return f"配对样本不足（n={n} < 2），无法给出置信区间。"
+    p_text = f"置换检验 p {'< 0.001' if p < 1e-3 else f'= {p:.3f}'}"
+    if ci[0] <= 0 <= ci[1]:
+        return f"主指标的 95% CI 包含 0（{p_text}）：在本 toy 设置下未观察到 {a} 与 {b} 之间可分辨的差异。"
+    direction = "高于" if ci[0] > 0 else "低于"
+    sign = "正" if ci[0] > 0 else "负"
+    if holm is not None and holm > 0.05:
+        return (
+            f"主指标未校正的 95% CI 不含 0 且为{sign}（{p_text}），但对 {family} 个比较做 Holm 校正后 "
+            f"p = {holm:.3f} > 0.05：不能确认 {a} 的测试分{direction} {b}。"
+        )
+    holm_text = "" if holm is None else f"，Holm 校正后 p {'< 0.001' if holm < 1e-3 else f'= {holm:.3f}'}"
+    return f"主指标的 95% CI 不含 0 且为{sign}（{p_text}{holm_text}）：在本 toy 设置下，{a} 的测试分{direction} {b}。"
 
 
 def _section_winners_curse(view: _RunView) -> list[str]:
@@ -444,7 +522,41 @@ def _section_anytime(view: _RunView) -> list[str]:
                 cell += f"（{len(vals) - len(valid)} 个无有效候选）"
             row.append(cell)
         table_rows.append(row)
-    return lines + _table(["已用训练 episode", *view.modes], table_rows)
+    lines += _table(["已用训练 episode", *view.modes], table_rows)
+    pairs = [(a, b) for a, b in PAIRS if a in view.modes and b in view.modes]
+    if pairs and checkpoints:
+        final = checkpoints[-1]
+        best = {
+            (a["mode"], a["replicate"]): a["best_so_far"]
+            for m in view.modes
+            for a in rows_by_mode[m]
+            if a["train_episodes_used"] == final
+        }
+        rows = []
+        for a, b in pairs:
+            diffs = [
+                best[(a, r)] - best[(b, r)]
+                for r in range(len(view.manifest["master_seeds"]))
+                if best.get((a, r)) is not None and best.get((b, r)) is not None
+            ]
+            ci = paired_bootstrap_ci(diffs)
+            rows.append(
+                [
+                    f"{a} − {b}",
+                    len(diffs),
+                    _fmt(_mean(diffs)),
+                    "—" if ci is None else f"[{_fmt(ci[0])}, {_fmt(ci[1])}]",
+                    _fmt_p(paired_sign_flip_pvalue(diffs)),
+                ]
+            )
+        lines += [
+            "",
+            f"最终检查点（{final} 个训练 episode）的训练 best-so-far 配对差。训练分是选择所用的分数，"
+            "高估了泛化表现（见第 4 节），这里只用来判断搜索本身是否更有效，不代替测试分比较：",
+            "",
+        ]
+        lines += _table(["比较", "配对数 n", "差值均值", "95% bootstrap CI", "置换检验 p"], rows)
+    return lines
 
 
 def _section_budget(view: _RunView) -> list[str]:

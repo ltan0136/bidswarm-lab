@@ -1,5 +1,6 @@
-# BidSwarm Lab - toy experiment (independent vs single, R = 20).
-# Purpose: framework-level comparison on the built-in toy backend only.
+# BidSwarm Lab - toy experiment (single / independent / cooperative, R = 20).
+# Purpose: framework-level comparison on the toy backend only. R = 20 only detects effects of about
+# 3.5 points or more (docs/POWER_ANALYSIS.md); use toy_cooperative.toml (R = 100) for smaller effects.
 # Results say nothing about AuctionNet or real revenue.
 
 [experiment]

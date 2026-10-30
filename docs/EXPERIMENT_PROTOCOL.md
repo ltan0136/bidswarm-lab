@@ -27,7 +27,11 @@ rounds           = per_worker / k                               （k = candidate
 
 ## 2. 重复与配对设计
 
-- 每次实验跑 R 个 replicate，replicate r 的 master seed 为 `seed + r`（`toy_smoke` R = 3，`toy_experiment` R = 20）。
+- 每次实验跑 R 个 replicate，replicate r 的 master seed 为 `seed + r`（`toy_smoke` R = 3，`toy_experiment` R = 20，
+  `toy_cooperative` R = 100）。R 的选择见第 8 节与 [POWER_ANALYSIS.md](POWER_ANALYSIS.md)。
+- replicate r 的全部结果只取决于配置与 master seed `seed + r`，与 R 和同一运行中的其他模式无关（有测试覆盖）：
+  R = 20 的运行恰好是同配置 R = 100 运行的前 20 个 replicate；同一 seed 下加入 `cooperative` 不改变
+  `single` / `independent` 的结果。因此不同运行之间可以按 replicate 配对。
 - **配对**：同一 replicate 内，所有模式共用同一组训练 / 验证 / 测试场景。
 - 场景种子由 `(master_seed, split, index)` 经 sha256 派生；场景 ID 为 `m<master_seed>-<split>-<index>`。
   构造后检查各 split 之间场景 ID 与种子都不重叠，重叠即报错。
@@ -83,12 +87,31 @@ independent 每轮 32 个 → 检查点 32 / 64 / 96）。
 ## 7. 统计与报告
 
 - 每个 replicate 先对测试场景取均值，再对 replicate 报告均值 ± 样本标准差（ddof = 1）。
-- 配对差 `independent − single` 与 `cooperative − independent`（两种模式都在本次运行中时）：对 replicate 做百分位 bootstrap，10000 次重采样，固定种子 20261030，报告 95% 置信区间。
-  replicate 数小于 2 时不报告区间；小于 10 时报告会提示区间粗糙。
+- 配对差 `independent − single` 与 `cooperative − independent`（两种模式都在本次运行中时）：对 replicate 做百分位 bootstrap，10000 次重采样，固定种子 20261030，报告 95% 置信区间；
+  同时报告配对符号翻转置换检验的 p 值（20000 次，固定种子 20261031）。replicate 数小于 2 时不报告区间；
+  小于 30 时报告提示：百分位 bootstrap 在小样本下偏窄（toy 上实测 R = 20 时名义 5% 的假阳性率约为 7.6%），
+  应同时参考置换检验 p 值。
+- 多重比较：两个比较同时出现时，对主指标的置换检验 p 做 Holm 校正；自动结论只有在未校正 CI 不含 0
+  **且** Holm 校正后 p ≤ 0.05 时才判定"高于 / 低于"，否则写明"不能确认"。
+- 训练集：报告在 anytime 一节给出最终检查点 best-so-far 的配对差，只用来判断搜索本身是否更有效，不代替测试分比较。
 - 赢家诅咒：对选定策略报告"验证分 − 测试分"的均值 ± 标准差。
 - 报告只从产物生成，删除 `report.md` 后 `report` 命令可逐字重建；没有改善也如实显示。
 
-## 8. 评分公式
+## 8. 统计功效与 R 的选择
+
+详见 [POWER_ANALYSIS.md](POWER_ANALYSIS.md)。在 toy 环境、预算 192、ES、主指标 `score_expected` 下，
+80% 功效下的最小可检出效应（MDE）：
+
+| R | `independent − single` | `cooperative − independent`（共用随机数流） |
+|---|---|---|
+| 20 | 约 3.5 分（约 3.1%） | 约 2.3 分（约 2.1%） |
+| 50 | 约 2.2 分（约 2.0%） | 约 1.4 分（约 1.3%） |
+| 100 | 约 1.6 分（约 1.4%） | 约 1.0 分（约 0.9%） |
+
+作为参照，同一设置下把训练预算从 96 加倍到 192 带来约 1.4 ~ 1.7 分的测试分提升。比较迁移效果的实验使用 **R = 100**
+（`configs/toy_cooperative.toml`）；R = 20 只适合冒烟测试或检查大效应。
+
+## 9. 评分公式
 
 复刻 AuctionNet `simul_bidding_env/Tracker/PlayerAnalysis.py`：
 
@@ -102,7 +125,7 @@ score = reward                  否则
 零转化时 cpa 极大，得分约为 0。`score_expected` 以期望转化（获胜且曝光机会的 pValue 之和）为 reward，
 `score_realized` 以实际转化为 reward。
 
-## 9. 结果的适用范围
+## 10. 结果的适用范围
 
 所有 toy 结果都标记 `backend=toy`、`purpose=framework_smoke_test`、`score_formula=auctionnet_neurips_replica`。
 它们只用于验证实验框架本身，**不代表 AuctionNet 上的表现，也不代表任何真实广告收益**。
