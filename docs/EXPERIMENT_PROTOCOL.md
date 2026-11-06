@@ -78,6 +78,8 @@ rounds           = per_worker / k                               （k = candidate
 外来候选 ID 进入接收方后续候选的 `info_sources`，每次送达记录在 `exchanges.jsonl`。
 在 random proposer 下迁移不影响采样，cooperative 与 independent 同样在分布上等价。
 
+`CmaesProposer`（`proposer = "cmaes"`）是 (μ/μ_w, λ)-CMA-ES，参数取 Hansen 教程的默认值，在 [0, 1]^d 中搜索；样本裁剪到盒内，更新使用裁剪后的点。一代 λ 个样本一次抽好，每轮发出 k 个，因此 λ 必须是 k 的倍数（`population = 0` 时取 4 + ⌊3 ln d⌋ 并向上取到 k 的倍数，d = 8 时为 10）；整代观测完才更新分布。失败候选排在最后；整代都失败时分布不变。cooperative 下，比本搜索者 best-so-far 更优的外来候选成为**下一代**的均值（σ 与协方差不变），不会在一代之内换均值。它是非精英策略，best-so-far 只由候选池与验证选择保留。
+
 ## 6. Anytime 曲线
 
 每轮结束时记录每个搜索者和模式整体的 best-so-far 训练 fitness，以及该模式已消耗的训练 episode 数

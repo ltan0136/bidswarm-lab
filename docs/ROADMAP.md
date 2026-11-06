@@ -15,6 +15,8 @@ v0.1 建了工程底座和"独立搜索"对照组；v0.2 加入 `cooperative`（
   更优者取代 ES 父代）。`info_sources` 记录外来候选 ID，`exchanges.jsonl` 记录每次送达，
   报告给出 `cooperative − independent` 的配对比较（同预算、同随机数流）。
 - 待做：其他拓扑（全连接、随机配对）、转发外来精英、共享失败区域或步长（σ）、按迁移间隔与 N 做扫描。
+- 已实现的第二种 proposer：`cmaes`。迁移在 CMA-ES 下只在代与代之间生效（外来精英成为下一代均值），
+  所以同样的 `exchange_interval` 对两种 proposer 的实际作用不同。
 - 检验强度：toy 上迁移带来的测试分差若与"训练预算加倍"相当（约 1.5 分）或更小，需要 R ≥ 100 才有约 80% 功效
   （见 [POWER_ANALYSIS.md](POWER_ANALYSIS.md)）；扫描多种拓扑 / 间隔时要控制多重比较。
 
@@ -23,6 +25,11 @@ v0.1 建了工程底座和"独立搜索"对照组；v0.2 加入 `cooperative`（
 - 作为 `Proposer` 的一个实现：输入为自己（及允许看到的）候选历史，输出为 `PolicySpec`（纯数据，经校验），不输出代码。
 - 需要额外记录：模型名、提示词版本、调用次数与费用（作为单独的预算维度），以及失败 / 非法输出的处理。
 - 本仓库目前不调用任何付费模型。
+- 对照组：策略空间是固定的 8 维有界实数，这类空间里经典优化器常强于 LLM 提议者，较好的做法是混合
+  （例如把 CMA-ES 的内部状态交给 LLM，[arXiv:2603.24647](https://arxiv.org/abs/2603.24647)）。LLM proposer 至少要与
+  ES、CMA-ES、random 在同一 episode 预算下比较；toy 上 CMA-ES 与 ES 的配对结果见 [TOY_RESULTS.md](TOY_RESULTS.md) 第 6 节。
+- 成本单位：除 episode 外按 token 记账并报告；带历史的提示每次调用更贵，只按调用数对齐会让历史更多的方法
+  多拿算力（[arXiv:2610.23977](https://arxiv.org/abs/2610.23977)）。还应加一个“不看历史的 LLM 独立采样”对照。
 
 ## 3. 记忆
 

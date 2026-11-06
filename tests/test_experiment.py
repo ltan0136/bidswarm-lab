@@ -385,3 +385,18 @@ def test_replicate_results_do_not_depend_on_number_of_replicates(small_run_dir: 
         assert (short / "selected" / name).read_text() == (small_run_dir / "selected" / name).read_text()
     long_candidates = [c for c in read_jsonl(small_run_dir / "candidates.jsonl") if c["replicate"] == 0]
     assert read_jsonl(short / "candidates.jsonl") == long_candidates
+
+
+def test_cmaes_proposer_runs_all_modes_within_budget_and_is_deterministic(tmp_path: Path):
+    config = small_config(search={"proposer": "cmaes", "modes": ["single", "independent", "cooperative"],
+                                  "cmaes": {"population": 4}})
+    run_dir = run_experiment(config, out_root=tmp_path / "a", serial=True)
+    candidates = read_jsonl(run_dir / "candidates.jsonl")
+    assert {c["operator"] for c in candidates} == {"cmaes_sample"}
+    train = [e for e in json.loads((run_dir / "budget.json").read_text())["entries"] if e["phase"] == "train"]
+    assert {(e["planned"], e["used"]) for e in train} == {(16, 16)}
+    assert read_jsonl(run_dir / "exchanges.jsonl")  # cooperative still migrates
+    rerun = run_experiment(config, out_root=tmp_path / "b", serial=True)
+    assert (run_dir / "candidates.jsonl").read_text() == (rerun / "candidates.jsonl").read_text()
+    evaluate_run(run_dir, serial=True)
+    assert "cooperative − independent" in (run_dir / "report.md").read_text(encoding="utf-8")

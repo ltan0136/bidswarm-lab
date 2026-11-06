@@ -14,7 +14,7 @@ v0.1 是**工程底座 + 可信的"独立搜索"对照组**，外加一个最小
 |---|---|
 | 内置 toy 环境：形状对齐 AuctionNet 的 `bidding()` 8 个参数，共同随机数（CRN） | **AuctionNet 后端未接入**（`integration_status=not_integrated`，选择即报错，不回退 toy） |
 | 两个策略模板：FixedRate（1 维）、DualControl（8 维），可移植内核兼容 Python 3.9 | 只有一种交换：环形迁移各自的 best-so-far；没有全连接 / 随机配对拓扑，不共享失败区域或步长 |
-| (1+λ)-ES 与随机采样 proposer；`single`、`independent`、`cooperative` 三种模式 | 没有 LLM proposer、没有记忆、没有动态预算 |
+| (1+λ)-ES、CMA-ES 与随机采样 proposer；`single`、`independent`、`cooperative` 三种模式 | 没有 LLM proposer、没有记忆、没有动态预算 |
 | 同步轮次调度、静态预算账本、谱系记录、进程池并行（spawn） | 没有硬超时（软超时只标记、不杀进程），没有重试 |
 | 训练 → 验证选择 → 单独的测试评估；配对 bootstrap CI + 置换检验 + Holm 校正的报告 | 没有 HTML 报告、没有数据库 |
 | 统计功效分析：A/A 校准、最小可检出效应、阳性对照（`scripts/power_analysis.py`） | toy 上 R = 20 只能检出 ≥ 3.5 分的效应；比较迁移效果需 R = 100 |
@@ -57,7 +57,7 @@ python3.11 -m venv .venv
 
 三种模式在同一训练 episode 预算下比较：`single` 是 1 个搜索者；`independent` 是 N 个互不通信的搜索者；
 `cooperative` 与 `independent` 相同（同样的 N、预算和随机数流），只是每 `exchange_interval` 轮（默认 1）把每个搜索者
-自己的 best-so-far 沿环 w0→w1→…→w0 送给下一个搜索者，更优的外来候选会取代 ES 父代（σ 不变）。迁移不消耗 episode，
+自己的 best-so-far 沿环 w0→w1→…→w0 送给下一个搜索者，更优的外来候选会取代 ES 父代（σ 不变；CMA-ES 下成为下一代的均值）。迁移不消耗 episode，
 最后一轮之后不迁移。报告给出 `independent − single`（只改变搜索者数）与 `cooperative − independent`（只改变是否迁移）两组配对比较。
 - `evaluate --run-dir <dir> [--serial] [--max-workers N] [--force]`：读取已固定的选定策略，在测试场景上评估它们和两个未调优基线，写入 `test_episodes.jsonl` 并刷新报告。已有测试结果时需 `--force` 才会重跑。
 - `report --run-dir <dir>`：只从产物重建 `report.md`。
@@ -71,6 +71,7 @@ python3.11 -m venv .venv
 | `toy_experiment_random.toml` | 上一行的 random A/A 对照（各模式在分布上等价） |
 | `toy_cooperative.toml` | 同 `toy_experiment.toml`，但 R=100（比较迁移效果用），4 进程约 5 分钟 |
 | `toy_cooperative_random.toml` | 上一行的 random A/A 对照 |
+| `toy_cooperative_cmaes.toml` | 同 `toy_cooperative.toml`，但 proposer = CMA-ES，用于与 ES 按 replicate 配对比较（结果见 [docs/TOY_RESULTS.md](docs/TOY_RESULTS.md) 第 6 节） |
 | `power/*.toml` | 功效分析用的 R=100 数据池（ES / random 预算 192；ES 预算 96、32） |
 | `auctionnet.example.toml` | 示例；**运行时必然报 `BackendNotIntegratedError`** |
 
@@ -78,6 +79,12 @@ python3.11 -m venv .venv
 
 ```bash
 .venv/bin/python scripts/power_analysis.py --aa runs/power/power_random_b192-<时间戳> --es runs/power/power_es_b192-<时间戳>
+```
+
+两个共用种子与场景的运行（例如不同 proposer）按 replicate 与模式配对比较测试分和训练 best-so-far：
+
+```bash
+.venv/bin/python scripts/compare_runs.py runs/toy_cooperative_cmaes-<时间戳> runs/toy_cooperative-<时间戳>
 ```
 
 ## 产物
@@ -119,7 +126,7 @@ src/bidswarm/
   search/        proposers.py, worker.py, coordinator.py, exchange.py
   evaluation/    metrics.py, splits.py, budget.py, runner.py, selection.py
   artifacts/     store.py, report.py
-configs/  configs/power/  scripts/power_analysis.py  tests/  docs/
+configs/  configs/power/  scripts/power_analysis.py  scripts/compare_runs.py  tests/  docs/
 ```
 
 ## 文档

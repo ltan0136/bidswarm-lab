@@ -77,10 +77,36 @@ cooperative 与 independent 共用随机数流，random 又不使用迁移来的
 - 与功效分析一致：在这个 toy 上，搜索方法层面的改动（ES vs random、迁移 vs 不迁移）带来的测试分差都在 1 分以内，
   而训练预算的变化带来数分的差别。toy 上的结论不能推广到 AuctionNet。
 
-## 6. 复现
+## 6. CMA-ES 对照（`toy_cooperative_cmaes.toml`，R = 100）
+
+与第 3 节相同的种子、场景和预算（每个 (replicate, mode) 192 个训练 episode），只把 proposer 换成 CMA-ES
+（默认种群 λ = 10，σ₀ = 0.3）。两次运行按 replicate 与模式配对，CMA-ES − ES，主指标 `score_expected`。
+运行环境：Python 3.11.18，numpy 2.4.6；同一环境下重跑的 ES 运行与第 3 节逐字相同（测试分差 +0.669 / +0.182）。
+
+| 模式 | CMA-ES 测试分 | ES 测试分 | 差（测试） | 95% bootstrap CI | 置换 p | Holm p（3 个比较） | 差（训练 best-so-far） | 95% CI | 置换 p |
+|---|---|---|---|---|---|---|---|---|---|
+| single | 112.290 | 111.986 | +0.304 | [−0.589, +1.242] | 0.518 | 0.518 | −0.689 | [−1.225, −0.158] | 0.012 |
+| independent | 111.797 | 112.655 | −0.858 | [−1.650, −0.041] | 0.033 | 0.100 | −1.110 | [−1.669, −0.552] | 0.0001 |
+| cooperative | 111.834 | 112.837 | −1.003 | [−1.988, −0.004] | 0.048 | 0.100 | −1.538 | [−2.156, −0.904] | < 0.0001 |
+
+CMA-ES 下 cooperative − independent 的测试分差为 +0.037（95% CI [−0.394, +0.446]，p = 0.861）。
+
+**解读**：在这个预算下，默认参数的 CMA-ES 不是比 (1+λ)-ES 更强的对照。independent 每个搜索者只有 12 个候选
+（λ = 10 时约 1.2 代），基本是围绕随机均值的一次采样加一次更新；非精英的 CMA-ES 在训练 best-so-far 上三种模式都显著落后于
+精英保留的 (1+λ)-ES。测试分上 single 持平，independent / cooperative 低约 1 分，但 Holm 校正后不显著。这与
+“方法排名依赖预算”的观察一致（[arXiv:2609.19799](https://arxiv.org/abs/2609.19799)）：经典优化器在固定低维空间里常是强基线，
+但前提是预算够它跑若干代。比较 LLM proposer 时应同时报告 ES 与 CMA-ES，并在多个预算点上比较。
+
+配对比较命令：
 
 ```bash
-for c in toy_experiment toy_experiment_random toy_cooperative toy_cooperative_random; do .venv/bin/python -m bidswarm run --config configs/$c.toml && .venv/bin/python -m bidswarm evaluate --run-dir "$(ls -d runs/$c-2* | tail -1)"; done
+.venv/bin/python scripts/compare_runs.py runs/toy_cooperative_cmaes-<时间戳> runs/toy_cooperative-<时间戳>
 ```
 
-R = 20 的两个实验各约 1 分钟，R = 100 的两个各约 4 ~ 5 分钟（4 进程）。功效数据池的命令见 [POWER_ANALYSIS.md](POWER_ANALYSIS.md) 第 5 节。
+## 7. 复现
+
+```bash
+for c in toy_experiment toy_experiment_random toy_cooperative toy_cooperative_random toy_cooperative_cmaes; do .venv/bin/python -m bidswarm run --config configs/$c.toml && .venv/bin/python -m bidswarm evaluate --run-dir "$(ls -d runs/$c-2* | tail -1)"; done
+```
+
+R = 20 的两个实验各约 1 分钟，R = 100 的三个各约 3 ~ 5 分钟（4 进程）。功效数据池的命令见 [POWER_ANALYSIS.md](POWER_ANALYSIS.md) 第 5 节。

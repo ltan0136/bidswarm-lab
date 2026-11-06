@@ -18,7 +18,7 @@ from .evaluation.budget import TrainingBudgetPlan, plan_training_budget
 from .kernel import registered_names
 from .types import FITNESS_METRICS, MODE_COOPERATIVE, MODE_INDEPENDENT, MODE_SINGLE, MODES, ConfigError
 
-PROPOSERS = ("es", "random")
+PROPOSERS = ("es", "cmaes", "random")
 
 _SECTIONS = {"experiment", "environment", "splits", "search", "selection", "runtime"}
 
@@ -33,6 +33,20 @@ class EsConfig:
 
 
 @dataclass(frozen=True)
+class CmaesConfig:
+    """CMA-ES in the normalized space [0, 1]^d.
+
+    ``population`` = 0 picks the standard 4 + floor(3 ln d), rounded up to a multiple of
+    ``candidates_per_round`` so that one generation spans whole rounds.
+    """
+
+    population: int = 0
+    sigma_init: float = 0.3
+    sigma_min: float = 1e-3
+    sigma_max: float = 1.0
+
+
+@dataclass(frozen=True)
 class SearchConfig:
     policy: str
     proposer: str
@@ -43,6 +57,7 @@ class SearchConfig:
     fitness_metric: str
     es: EsConfig
     exchange_interval: int = 1  # cooperative mode: ring migration every this many rounds
+    cmaes: CmaesConfig = CmaesConfig()
 
 
 @dataclass(frozen=True)
@@ -204,6 +219,7 @@ def _parse(data: Mapping[str, Any]) -> ExperimentConfig:
             "train_episode_budget",
             "fitness_metric",
             "es",
+            "cmaes",
             "exchange_interval",
         },
     )
@@ -241,16 +257,35 @@ def _parse(data: Mapping[str, Any]) -> ExperimentConfig:
     if not es.success_factor > 1 or not 0 < es.failure_factor < 1:
         raise ConfigError("[search.es] require success_factor > 1 and 0 < failure_factor < 1")
 
+    cm_sec = _section(src, "cmaes", required=False)
+    _check_keys(cm_sec, "search.cmaes", set(CmaesConfig.__dataclass_fields__))
+    dc = CmaesConfig()
+    cmaes = CmaesConfig(
+        population=_get_int(cm_sec, "search.cmaes", "population", dc.population, minimum=0),
+        sigma_init=_get_float(cm_sec, "search.cmaes", "sigma_init", dc.sigma_init),
+        sigma_min=_get_float(cm_sec, "search.cmaes", "sigma_min", dc.sigma_min),
+        sigma_max=_get_float(cm_sec, "search.cmaes", "sigma_max", dc.sigma_max),
+    )
+    if not (0 < cmaes.sigma_min <= cmaes.sigma_init <= cmaes.sigma_max):
+        raise ConfigError("[search.cmaes] require 0 < sigma_min <= sigma_init <= sigma_max")
+    candidates_per_round = _get_int(src, "search", "candidates_per_round", minimum=1)
+    if cmaes.population and (cmaes.population < 2 or cmaes.population % candidates_per_round):
+        raise ConfigError(
+            "[search.cmaes] population must be >= 2 and a multiple of candidates_per_round "
+            f"({candidates_per_round}), or 0 for the default"
+        )
+
     search = SearchConfig(
         policy=policy,
         proposer=proposer,
         modes=modes,
         independent_workers=_get_int(src, "search", "independent_workers", 4, minimum=1),
-        candidates_per_round=_get_int(src, "search", "candidates_per_round", minimum=1),
+        candidates_per_round=candidates_per_round,
         train_episode_budget=_get_int(src, "search", "train_episode_budget", minimum=1),
         fitness_metric=fitness_metric,
         es=es,
         exchange_interval=_get_int(src, "search", "exchange_interval", 1, minimum=1),
+        cmaes=cmaes,
     )
 
     sel = _section(data, "selection")

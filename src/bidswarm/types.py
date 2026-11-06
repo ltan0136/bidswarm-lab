@@ -32,6 +32,7 @@ MODES = (MODE_SINGLE, MODE_INDEPENDENT, MODE_COOPERATIVE)
 OP_INIT_RANDOM = "init_random"
 OP_GAUSSIAN_MUTATION = "gaussian_mutation"
 OP_RANDOM = "random"
+OP_CMAES_SAMPLE = "cmaes_sample"
 
 FITNESS_METRICS = ("score_expected", "score_realized")
 
