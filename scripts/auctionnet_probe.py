@@ -33,6 +33,8 @@ ap.add_argument("--kernel-parent", required=True)
 ap.add_argument("--player", default="pid")
 ap.add_argument("--player-index", type=int, default=0)
 ap.add_argument("--episodes", type=int, default=1)
+ap.add_argument("--jit-optimize", choices=("on", "off"), default="on",
+                help="TorchScript graph-executor optimization; upstream default is on, the bidswarm runner uses off")
 args = ap.parse_args()
 
 upstream = os.path.abspath(args.upstream)
@@ -45,6 +47,7 @@ sys.path.insert(0, kernel_parent)
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
+torch._C._set_graph_executor_optimize(args.jit_optimize == "on")
 torch.manual_seed(1)  # as upstream main_test.py
 np.random.seed(1)
 
@@ -101,6 +104,7 @@ result = rt.run_test(player_index=args.player_index)
 elapsed = time.time() - started
 out = {
     "player": args.player, "player_index": args.player_index, "episodes": args.episodes,
+    "jit_optimize": args.jit_optimize,
     "seconds": round(elapsed, 2),
     "max_rss_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1),
     "score": float(result["score"]), "reward": float(result["reward"]),

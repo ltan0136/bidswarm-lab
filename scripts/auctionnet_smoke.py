@@ -4,8 +4,11 @@ Checks, for the FixedRate and DualControl default specs at one player position:
 
 1. The runner's own tick loop reproduces upstream ``run/run_test.py`` exactly:
    per-episode reward (realized conversions) and charged cost for episodes 0
-   and 1 equal the values ``run_test`` produces for the same player, both
-   single-threaded (``scripts/auctionnet_probe.py`` drives ``run_test``).
+   and 1 equal, bit for bit, the values ``run_test`` produces for the same
+   player (``scripts/auctionnet_probe.py`` drives ``run_test``), both
+   single-threaded and with TorchScript graph optimization off, as the runner
+   runs. (With it on, upstream's own results depend on how many times the
+   competitor models ran before in the process, at ~1e-9.)
 2. bidswarm's score equals upstream ``PlayerAnalysis``'s per-episode score.
 3. Results do not depend on request order: episode 0 asked again after
    episode 1, and after another spec, is identical.
@@ -43,7 +46,7 @@ def reference(python: str, upstream: str, name: str, player_index: int) -> list[
     env = dict(os.environ, OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1")
     out = subprocess.run(
         [python, str(PROBE), "--upstream", upstream, "--kernel-parent", str(auctionnet.KERNEL_PARENT),
-         "--player", name, "--player-index", str(player_index), "--episodes", "2"],
+         "--player", name, "--player-index", str(player_index), "--episodes", "2", "--jit-optimize", "off"],
         capture_output=True, text=True, env=env, check=True,
     ).stdout
     line = next(x for x in out.splitlines() if x.startswith("PROBE_RESULT "))

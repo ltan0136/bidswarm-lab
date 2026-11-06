@@ -103,6 +103,11 @@ class Runner:
         import torch
 
         torch.set_num_threads(1)
+        # Competitors are TorchScript models. With graph-executor optimization on, the first
+        # calls in a process run unoptimized (profiling) and later ones fused, so the same
+        # episode gave results differing at ~1e-9 depending on what the process ran before.
+        # Off, every call uses the same interpreter path and results do not depend on history.
+        torch._C._set_graph_executor_optimize(False)
         torch.manual_seed(1)  # as upstream main_test.py
         np.random.seed(1)
         import gin
@@ -123,6 +128,7 @@ class Runner:
             raise RuntimeError("expected %d ticks per period, got %s" % (NUM_TICK, self.controller.num_tick))
         self.versions = {
             "python": sys.version.split()[0], "numpy": np.__version__, "torch": torch.__version__,
+            "torchscript_graph_optimize": bool(torch._C._get_graph_executor_optimize()),
         }
 
     def ready_message(self) -> Dict[str, Any]:
@@ -156,8 +162,8 @@ class Runner:
         h_auction: List[Any] = []
         h_impression: List[Any] = []
         h_lwc: List[Any] = []
-        reward_total = 0.0
-        cost_total = 0.0
+        tick_rewards: List[float] = []
+        tick_costs: List[float] = []
         expected_conversions = 0.0
         wins = 0
         exposures = 0
@@ -221,13 +227,17 @@ class Runner:
             h_auction.append(np.stack((xi_pit, slot_pit, cost_pit), axis=-1))
             h_impression.append(np.stack((is_exposed_pit, conversion_action_pit), axis=-1))
 
-            reward_total += float(reward[player])
-            cost_total += float(cost[player])
+            tick_rewards.append(float(reward[player]))
+            tick_costs.append(float(cost[player]))
             expected_conversions += float(np.sum(pv_values[:, player] * xi_pit[player] * is_exposed_pit[player]))
             wins += int(np.sum(xi_pit[player]))
             exposures += int(np.sum(is_exposed_pit[player]))
             opportunities += int(n_pv)
 
+        # Sum per-tick values with np.sum, as PlayerAnalysis does (np.sum over the tick column),
+        # so totals match upstream to the last bit rather than differing by summation order.
+        reward_total = float(np.sum(np.asarray(tick_rewards, dtype=float)))
+        cost_total = float(np.sum(np.asarray(tick_costs, dtype=float)))
         # Let the kernel read the final step, then compare its books with what was charged.
         policy = self.shim.policy
         policy._consume_history(
