@@ -109,7 +109,7 @@ def build_pipeline(
             mode=mode,
             worker_id=w,
             policy_name=config.search.policy,
-            proposer=make_proposer(config.search.proposer, dim, config.search.es),
+            proposer=make_proposer(config.search.proposer, dim, config.search.es, config.search.cmaes),
             rng=proposer_rng(master_seed, rng_mode, w),
             accepts_evidence=cooperative,
         )

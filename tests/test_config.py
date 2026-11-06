@@ -97,6 +97,11 @@ def test_unknown_keys_and_sections_rejected():
         {"search": {"modes": ["cooperative"], "independent_workers": 1}},
         {"search": {"exchange_interval": 0}},
         {"search": {"exchange_interval": 1.5}},
+        {"search": {"cmaes": {"population": 1}}},
+        {"search": {"cmaes": {"population": 3}}},  # not a multiple of candidates_per_round = 2
+        {"search": {"cmaes": {"sigma_init": 0}}},
+        {"search": {"cmaes": {"sigma_min": 0.5, "sigma_init": 0.3}}},
+        {"search": {"cmaes": {"lambda": 4}}},
         {"selection": {"top_k": 9}},  # pool has 8 candidates
         {"runtime": {"episode_timeout_s": 0}},
         {"experiment": {"replicates": 0}},

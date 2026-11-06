@@ -6,7 +6,7 @@
           寻找策略（本仓库的研究对象，可以复杂）                执行策略（必须简单、稳定、可移植）
  ┌─────────────────────────────────────────────────┐      ┌──────────────────────────────────┐
  │ Coordinator（普通程序，不是大模型）               │      │ bidswarm.kernel                  │
- │   ├─ SearchWorker × N  ── Proposer（ES / 随机）   │ spec │   PolicySpec = name + params     │
+ │   ├─ SearchWorker × N  ── Proposer（ES / CMA-ES / 随机）│ spec │   PolicySpec = name + params     │
  │   ├─ BudgetLedger（静态扣预算）                   │ ───▶ │   FixedRatePolicy / DualControl  │
  │   ├─ ExchangePolicy（NoExchange / RingExchange）  │ JSON │   bidding(8 个 AuctionNet 参数)  │
  │   └─ 选择 / 测试隔离 / 产物写入                    │      │   Python 3.9 + numpy + 标准库    │

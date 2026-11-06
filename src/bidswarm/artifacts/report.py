@@ -31,6 +31,12 @@ from .store import (
 )
 
 BOOTSTRAP_RESAMPLES = 10_000
+# How a received card acts on each proposer (random ignores it).
+_MIGRATION_EFFECT = {
+    "es": "更优的外来候选取代 ES 父代，σ 不变。",
+    "cmaes": "比本搜索者 best-so-far 更优的外来候选成为下一代 CMA-ES 的均值，σ 与协方差不变。",
+    "random": "random proposer 不使用外来候选。",
+}
 BOOTSTRAP_SEED = 20261030
 BOOTSTRAP_ALPHA = 0.05
 PERMUTATION_RESAMPLES = 20_000
@@ -285,7 +291,7 @@ def _section_run_info(view: _RunView) -> list[str]:
         lines.append(
             f"- cooperative：每 {s.get('exchange_interval', 1)} 轮把每个搜索者自己的 best-so-far 沿环 "
             f"w0→w1→…→w{s['independent_workers'] - 1}→w0 送给下一个搜索者（最后一轮后不迁移，同一张卡不重复送达）；"
-            f"更优的外来候选取代 ES 父代，σ 不变。迁移不消耗 episode。本次共 {n_deliveries} 次送达，见 `exchanges.jsonl`。"
+            f"{_MIGRATION_EFFECT.get(s['proposer'], '')}迁移不消耗 episode。本次共 {n_deliveries} 次送达，见 `exchanges.jsonl`。"
         )
     plans = m["budget_plans"]
     lines += ["", "预算换算（配置校验时已检查整除）：", ""]
