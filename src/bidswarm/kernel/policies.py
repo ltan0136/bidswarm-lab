@@ -211,7 +211,9 @@ class BasePolicy(object):
                 _as_vector("historyLeastWinningCost[%d]" % i, history_least_winning_cost[i])
             if not (pinfo.shape[0] == auction.shape[0] == impression.shape[0]):
                 raise PolicyInputError("history step %d has inconsistent row counts" % i)
-            self._spent += float(np.sum(auction[:, 2]))
+            # Only exposed impressions are charged (AuctionNet run_test.py: cost x is_exposed);
+            # the cost column is the slot price whether or not the impression was shown.
+            self._spent += float(np.sum(auction[:, 2] * impression[:, 0]))
             self._expected_conversions += float(
                 np.sum(pinfo[:, 0] * auction[:, 0] * impression[:, 0])
             )

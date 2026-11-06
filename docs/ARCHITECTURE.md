@@ -77,7 +77,7 @@ for round r = 0, 1, ...:                       # 所有 (replicate, mode) 共用
   `least_winning_cost = price_scale × 时段因子(t) × (pValue / E[pValue])^elasticity × exp(noise·ε)`（对数正态，与 pValue 正相关）；
   以及曝光均匀数、转化均匀数、预算截断顺序键。
 - **拍卖**：单坑位二价。`bid > least_winning_cost` 获胜并支付 `least_winning_cost`；获胜后以 `exposure_prob` 曝光；
-  曝光且转化均匀数 `< p_true` 记一次转化。**这是对上游多坑位机制的简化**；toy 中按获胜（而非曝光）计费。
+  曝光且转化均匀数 `< p_true` 记一次转化。**这是对上游多坑位机制的简化**；与 AuctionNet 一致，只对曝光的获胜计费（`historyAuctionResult` 的 cost 列是坑位价格，无论是否曝光）。
 - **预算硬上限**：某步获胜花费超过剩余预算时，按预先抽取的顺序键依次保留获胜机会，只要累计花费不超过剩余预算；
   其余视为未获胜。因此花费永远不超过预算（有测试覆盖）。
 - **观察**：只传 `bidding()` 的 8 个参数。历史为逐步列表：

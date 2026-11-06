@@ -110,7 +110,8 @@ def test_dual_control_matches_hand_computation():
 
     history = ([], [], [], [], [])
     _append(history, _history_step(2, p, np.array([1.0, 1.0]), np.array([3.0, 5.0]), np.array([1.0, 0.0])))
-    spent, expected = 8.0, 0.02
+    # Both opportunities won (costs 3 and 5) but only the first was exposed: only it is charged.
+    spent, expected = 3.0, 0.02
     spend_frac, plan_frac = spent / budget, (1 / T) ** 2.0
     lam_target = 1.2 * math.exp(-0.5 * (spent / expected / cpa - 1)) * math.exp(-1.0 * (spend_frac - plan_frac))
     lam = min(max(0.3 * 1.2 + 0.7 * lam_target, 0.2), 4.0)
