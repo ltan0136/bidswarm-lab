@@ -12,7 +12,7 @@ v0.1 是**工程底座 + 可信的"独立搜索"对照组**，外加一个最小
 
 | 能做（已实现并有测试） | 不能做 / 未实现 |
 |---|---|
-| 内置 toy 环境：形状对齐 AuctionNet 的 `bidding()` 8 个参数，共同随机数（CRN） | **AuctionNet 后端未接入**（`integration_status=not_integrated`，选择即报错，不回退 toy） |
+| 内置 toy 环境：形状对齐 AuctionNet 的 `bidding()` 8 个参数，共同随机数（CRN） | **AuctionNet 后端未接入**（`integration_status=not_integrated`，选择即报错，不回退 toy）；接入第 1 步（固定上游 commit 的只读调查与实测）已完成，结论见 [docs/AUCTIONNET_INTEGRATION.md](docs/AUCTIONNET_INTEGRATION.md) |
 | 两个策略模板：FixedRate（1 维）、DualControl（8 维），可移植内核兼容 Python 3.9 | 只有一种交换：环形迁移各自的 best-so-far；没有全连接 / 随机配对拓扑，不共享失败区域或步长 |
 | (1+λ)-ES、CMA-ES 与随机采样 proposer；`single`、`independent`、`cooperative` 三种模式 | 没有 LLM proposer、没有记忆、没有动态预算 |
 | 同步轮次调度、静态预算账本、谱系记录、进程池并行（spawn） | 没有硬超时（软超时只标记、不杀进程），没有重试 |
@@ -126,7 +126,7 @@ src/bidswarm/
   search/        proposers.py, worker.py, coordinator.py, exchange.py
   evaluation/    metrics.py, splits.py, budget.py, runner.py, selection.py
   artifacts/     store.py, report.py
-configs/  configs/power/  scripts/power_analysis.py  scripts/compare_runs.py  tests/  docs/
+configs/  configs/power/  scripts/power_analysis.py  scripts/compare_runs.py  scripts/auctionnet_probe.py  tests/  docs/
 ```
 
 ## 文档

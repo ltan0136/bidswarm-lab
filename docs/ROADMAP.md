@@ -7,6 +7,8 @@ v0.1 建了工程底座和"独立搜索"对照组；v0.2 加入 `cooperative`（
 ## 0. 前置：AuctionNet 接入
 
 见 [AUCTIONNET_INTEGRATION.md](AUCTIONNET_INTEGRATION.md) 的三步计划（只读调查 → shim → 子进程冒烟测试）。
+第 1 步已完成（固定上游 commit `c20de63`）：在线仿真无需额外下载，但发现静默回退 PID、内核花费记账与上游按曝光收费不一致、
+每周期约 45–50 秒等问题，第 2 步需要先处理，详见该文档第 5 节。
 在此之前，下面所有方向的结果都只是 toy 上的框架验证。
 
 ## 1. 信息交换

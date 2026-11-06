@@ -16,15 +16,18 @@ from .base import BackendNotIntegratedError, Environment
 INTEGRATION_STATUS = "not_integrated"
 
 BLOCKERS = (
-    "no shim exists yet that subclasses AuctionNet's BaseBiddingStrategy and loads a PolicySpec",
-    "interface facts were checked against the upstream main branch, not a pinned commit SHA; "
-    "they must be re-verified against the exact commit before adapting",
-    "open questions are unresolved: whether tickValue records realized or expected conversions, "
-    "time steps per delivery period, whether online simulation needs extra weights/data, "
-    "seeding and reset behaviour, auction mechanism details",
-    "offline evaluation needs per-opportunity raw data (full pre-generated set is about 80GB); "
-    "this project deliberately does not download AuctionNet data or weights",
-    "no subprocess smoke test against a real AuctionNet checkout (Python 3.9.12) has been run",
+    "no shim/backend exists yet; step 1 (read-only investigation at upstream commit "
+    "c20de631a40e24669d1d6a8e2acefd8f492f172d) is done, see docs/AUCTIONNET_INTEGRATION.md",
+    "upstream run_test silently falls back to its PID agent if the player import fails; the backend "
+    "must inject the player directly and verify spec_hash and call counts",
+    "the kernel accumulates spend from historyAuctionResult's cost column, but AuctionNet charges "
+    "only exposed impressions (about 30% overstatement measured); fix the kernel and decide whether "
+    "the toy backend should also charge on exposure",
+    "run_test always starts at episode 0; the backend needs its own tick loop to place train / "
+    "validation / test scenarios on disjoint episode indices, checked against run_test",
+    "one delivery period takes about 45-50 s and 2.7 GB per process (about 280 periods per hour on "
+    "4 cores); the toy-sized protocol (~75,000 periods) is infeasible and must be scaled down",
+    "no subprocess smoke test of a kernel policy through a finished backend has been run",
 )
 
 _ALLOWED_KEYS = frozenset(
