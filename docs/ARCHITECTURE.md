@@ -17,15 +17,15 @@
   参数必须有限且在边界内；内核从不 `eval` 或按名字动态导入。
 - 执行侧只有一个统一形式：`bid = λ_t × cpa_target × p_adj`，`p_adj = max(pValue − ρ·pValueSigma, 0)`。
   不同模板只是 λ_t 和 ρ 的计算方式不同。
-- 将来 AuctionNet 侧只需要一个很薄的 shim：读取 JSON 中的 `PolicySpec`，调用 `kernel.make_policy`，
-  在每个时间步把 `bidding()` 转发给内核（见 [AUCTIONNET_INTEGRATION.md](AUCTIONNET_INTEGRATION.md)）。
+- AuctionNet 侧只有一个很薄的 shim（`environments/auctionnet_runner.py`，在上游 Python 3.9 子进程中运行）：接收 JSON 中的
+  `PolicySpec`，调用 `kernel.make_policy`，在每个时间步把 `bidding()` 转发给内核（见 [AUCTIONNET_INTEGRATION.md](AUCTIONNET_INTEGRATION.md)）。
 
 ## 2. 模块边界
 
 | 模块 | 职责 | 依赖规则 |
 |---|---|---|
 | `kernel/` | `PolicySpec`、校验、`spec_hash`、策略模板、归一化空间互转 | **兼容 Python 3.9**；只依赖 numpy + 标准库；不导入 `bidswarm` 其他子包 |
-| `environments/` | 后端接口 `Environment`；`toy` 实现；`auctionnet` 占位（构造即抛 `BackendNotIntegratedError`） | 只依赖 kernel 外的 `types`、`evaluation.metrics` |
+| `environments/` | 后端接口 `Environment`；`toy` 实现；`auctionnet` 客户端（每个进程一个长驻的上游 runner 子进程，JSON 行协议）；`auctionnet_runner.py` 在上游 Python 3.9 中运行，只导入上游代码与 kernel | 只依赖 kernel 外的 `types`、`evaluation.metrics` |
 | `evaluation/` | 评分公式复刻、场景划分、预算换算与账本、episode 任务函数与执行器、选择规则 | 任务函数是纯函数，可在 spawn 子进程运行 |
 | `search/` | proposer、worker（搜索者）、coordinator（轮次调度）、exchange 接口 | 不读取验证 / 测试场景 |
 | `artifacts/` | 运行目录、严格 JSON 写入、只读产物的报告生成 | 报告不访问内存状态 |
@@ -77,8 +77,8 @@ for round r = 0, 1, ...:                       # 所有 (replicate, mode) 共用
   `least_winning_cost = price_scale × 时段因子(t) × (pValue / E[pValue])^elasticity × exp(noise·ε)`（对数正态，与 pValue 正相关）；
   以及曝光均匀数、转化均匀数、预算截断顺序键。
 - **拍卖**：单坑位二价。`bid > least_winning_cost` 获胜并支付 `least_winning_cost`；获胜后以 `exposure_prob` 曝光；
-  曝光且转化均匀数 `< p_true` 记一次转化。**这是对上游多坑位机制的简化**；toy 中按获胜（而非曝光）计费。
-- **预算硬上限**：某步获胜花费超过剩余预算时，按预先抽取的顺序键依次保留获胜机会，只要累计花费不超过剩余预算；
+  曝光且转化均匀数 `< p_true` 记一次转化。**这是对上游多坑位机制的简化**；与 AuctionNet 一致，只对曝光的获胜计费（`historyAuctionResult` 的 cost 列是坑位价格，无论是否曝光）。
+- **预算硬上限**：某步实际扣费（曝光的获胜）超过剩余预算时，按预先抽取的顺序键依次保留获胜机会，只要累计扣费不超过剩余预算；
   其余视为未获胜。因此花费永远不超过预算（有测试覆盖）。
 - **观察**：只传 `bidding()` 的 8 个参数。历史为逐步列表：
   `historyPValueInfo` 每步 `(n, 2) = [pValue, sigma]`，`historyBid (n,)`，
@@ -94,8 +94,8 @@ for round r = 0, 1, ...:                       # 所有 (replicate, mode) 共用
 
 ## 5. 策略模板
 
-两种模板都从构造参数读取 `budget`、`cpa_target`、`category`，不硬编码广告主数值；已花费金额和期望转化
-从历史**增量**计算（每次只处理新增的历史项，O(T)）。剩余预算 ≤ 0 时全部出价为 0；没有机会时返回空数组；
+两种模板都从构造参数读取 `budget`、`cpa_target`、`category`，不硬编码广告主数值；已花费金额（只计曝光的获胜，
+即 `cost × is_exposed`，与 AuctionNet 扣费一致）和期望转化从历史**增量**计算（每次只处理新增的历史项，O(T)）。剩余预算 ≤ 0 时全部出价为 0；没有机会时返回空数组；
 输入含 NaN/Inf 时抛 `PolicyInputError`。
 
 **FixedRatePolicy**：λ ≡ `ratio ∈ [0.3, 3.0]`，ρ = 0，对应上游 Abid 基线。

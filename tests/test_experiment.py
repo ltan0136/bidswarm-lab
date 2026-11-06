@@ -64,7 +64,7 @@ def test_run_writes_artifacts_but_never_touches_test_split(small_run_dir: Path):
 
     manifest = json.loads((small_run_dir / "manifest.json").read_text())
     assert manifest["backend"] == "toy"
-    assert manifest["auctionnet_integration_status"] == "not_integrated"
+    assert manifest["auctionnet_integration_status"] == "integrated_online"
     assert manifest["purpose"] == "framework_smoke_test"
     assert manifest["python_version"] and manifest["numpy_version"]
 

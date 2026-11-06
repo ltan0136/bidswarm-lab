@@ -142,6 +142,55 @@ def test_second_price_and_exposure_semantics():
     assert result["wins"] > 0
 
 
+class HistoryRef:
+    """Keeps the history lists the environment passes; it appends the final step to them afterwards."""
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.refs = None
+
+    def reset(self):
+        self.inner.reset()
+
+    def bidding(self, t, p, s, *history):
+        self.refs = history
+        return self.inner.bidding(t, p, s, *history)
+
+
+def test_only_exposed_wins_are_charged_and_the_kernel_books_agree():
+    env = ToyEnvironment(SMALL_ENV)
+    unexposed_wins = 0
+    for seed in range(5):
+        sc = dict(scenario(env, seed), budget=1e9)
+        ref = HistoryRef(_fixed(sc, 2.0))
+        result = env.run_episode(sc, ref)
+        _, _, auction, impression, _ = ref.refs
+        assert len(auction) == SMALL_ENV.num_time_steps
+        charged = sum(float(np.sum(a[:, 2] * i[:, 0])) for a, i in zip(auction, impression))
+        assert result["cost"] == pytest.approx(charged, rel=1e-12)
+        for a, i in zip(auction, impression):
+            unexposed = (a[:, 0] > 0) & (i[:, 0] == 0)
+            assert np.all(a[unexposed, 2] > 0)  # the slot price is still reported ...
+            unexposed_wins += int(np.sum(unexposed))
+        ref.inner._consume_history(*ref.refs)  # let the kernel read the final step as well
+        assert ref.inner.spent == pytest.approx(result["cost"], rel=1e-12)  # ... but never charged
+    assert unexposed_wins > 0
+
+
+def test_budget_truncation_uses_the_charged_cost():
+    env = ToyEnvironment(SMALL_ENV)
+    for seed in range(10):
+        sc = scenario(env, seed)
+        ref = HistoryRef(ConstantPolicy(1e6, SMALL_ENV.opportunities_per_step))
+        result = env.run_episode(sc, ref)
+        assert result["cost"] <= sc["budget"]
+        _, _, auction, impression, _ = ref.refs
+        charged = sum(float(np.sum(a[:, 2] * i[:, 0])) for a, i in zip(auction, impression))
+        assert result["cost"] == pytest.approx(charged, rel=1e-12)
+        # The cap binds on what is charged, so the budget is (nearly) exhausted.
+        assert result["budget_utilization"] > 0.95
+
+
 def test_spend_never_exceeds_budget():
     env = ToyEnvironment(SMALL_ENV)
     truncated = 0

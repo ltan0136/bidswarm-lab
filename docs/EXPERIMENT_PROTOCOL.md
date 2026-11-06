@@ -91,7 +91,7 @@ independent 每轮 32 个 → 检查点 32 / 64 / 96）。
 - 每个 replicate 先对测试场景取均值，再对 replicate 报告均值 ± 样本标准差（ddof = 1）。
 - 配对差 `independent − single` 与 `cooperative − independent`（两种模式都在本次运行中时）：对 replicate 做百分位 bootstrap，10000 次重采样，固定种子 20261030，报告 95% 置信区间；
   同时报告配对符号翻转置换检验的 p 值（20000 次，固定种子 20261031）。replicate 数小于 2 时不报告区间；
-  小于 30 时报告提示：百分位 bootstrap 在小样本下偏窄（toy 上实测 R = 20 时名义 5% 的假阳性率约为 7.6%），
+  小于 30 时报告提示：百分位 bootstrap 在小样本下偏窄（toy 上实测 R = 20 时名义 5% 的假阳性率约为 6.5%，按获胜收费时约 7.6%），
   应同时参考置换检验 p 值。
 - 多重比较：两个比较同时出现时，对主指标的置换检验 p 做 Holm 校正；自动结论只有在未校正 CI 不含 0
   **且** Holm 校正后 p ≤ 0.05 时才判定"高于 / 低于"，否则写明"不能确认"。
@@ -102,15 +102,17 @@ independent 每轮 32 个 → 检查点 32 / 64 / 96）。
 ## 8. 统计功效与 R 的选择
 
 详见 [POWER_ANALYSIS.md](POWER_ANALYSIS.md)。在 toy 环境、预算 192、ES、主指标 `score_expected` 下，
-80% 功效下的最小可检出效应（MDE）：
+80% 功效下的最小可检出效应（MDE，2026-11-06 按曝光收费后重算）：
 
 | R | `independent − single` | `cooperative − independent`（共用随机数流） |
 |---|---|---|
-| 20 | 约 3.5 分（约 3.1%） | 约 2.3 分（约 2.1%） |
-| 50 | 约 2.2 分（约 2.0%） | 约 1.4 分（约 1.3%） |
-| 100 | 约 1.6 分（约 1.4%） | 约 1.0 分（约 0.9%） |
+| 20 | 约 3.6 分（约 2.8%） | 约 3.6 分（约 2.7%） |
+| 50 | 约 2.3 分（约 1.8%） | 约 2.1 分（约 1.6%） |
+| 100 | 约 1.7 分（约 1.3%） | 约 1.4 分（约 1.1%） |
 
-作为参照，同一设置下把训练预算从 96 加倍到 192 带来约 1.4 ~ 1.7 分的测试分提升。比较迁移效果的实验使用 **R = 100**
+作为参照，同一设置下把训练预算从 96 加倍到 192 带来约 1.1 ~ 1.7 分的测试分提升。
+同一设计的 random A/A 检查在 R = 100 时给出过 −1.07 分（p = 0.016）的假阳性，解读约 1 ~ 1.5 分的差时要以它为参照
+（[POWER_ANALYSIS.md](POWER_ANALYSIS.md) 第 4 节）。比较迁移效果的实验使用 **R = 100**
 （`configs/toy_cooperative.toml`）；R = 20 只适合冒烟测试或检查大效应。
 
 ## 9. 评分公式
@@ -131,3 +133,10 @@ score = reward                  否则
 
 所有 toy 结果都标记 `backend=toy`、`purpose=framework_smoke_test`、`score_formula=auctionnet_neurips_replica`。
 它们只用于验证实验框架本身，**不代表 AuctionNet 上的表现，也不代表任何真实广告收益**。
+
+toy 与 AuctionNet 都只对**曝光**的获胜收费（AuctionNet `run_test.py:192`），`historyAuctionResult` 的 cost 列是坑位价格；
+toy 在 2026-11-06 改为这一规则，之前的 toy 数字（v0.2 及更早）按获胜收费，不能与之后的数字混合比较。
+
+AuctionNet 结果标记 `backend=auctionnet`、`purpose=auctionnet_online_simulation`，并记录上游 commit、玩家位置与 episode 序号。
+同一 replicate 的训练 / 验证 / 测试场景使用互不重叠的 episode 序号（`evaluation/splits.py` 检查），广告主固定为 `player_index`
+对应的上游广告主；竞争者是上游固定的基线策略，结果同样**不代表真实广告收益**。

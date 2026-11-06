@@ -7,14 +7,18 @@ of the policy (common random numbers): different policies on the same scenario
 face exactly the same traffic, prices and uniforms.
 
 Auction: single slot, second price. A bid strictly above
-``least_winning_cost`` wins and pays ``least_winning_cost``. This is a
+``least_winning_cost`` wins the slot at price ``least_winning_cost``. This is a
 simplification of the upstream multi-slot mechanism. A win is exposed with
-probability ``exposure_prob``; an exposed win converts when its conversion
-uniform is below ``p_true = clip(pValue + pValueSigma * z, 0, 1)``.
+probability ``exposure_prob``, and, as in AuctionNet (``run_test.py``: cost x
+is_exposed), only exposed wins are charged; the history's cost column is the
+slot price whether or not the impression was shown. An exposed win converts
+when its conversion uniform is below ``p_true = clip(pValue + pValueSigma * z, 0, 1)``.
 
-Budget: if a step's winning cost exceeds the remaining budget, winners are
-kept in the order of a pre-drawn per-opportunity key while the cumulative cost
-fits; the rest become losses. Spend therefore never exceeds the budget.
+Budget: if a step's charged cost exceeds the remaining budget, winners are
+kept in the order of a pre-drawn per-opportunity key while the cumulative
+charged cost fits; the rest become losses. Spend therefore never exceeds the
+budget. (AuctionNet instead drops a random share of the over-spender's wins
+and re-runs the auction; the toy keeps its deterministic truncation.)
 """
 
 from __future__ import annotations
@@ -219,14 +223,16 @@ class ToyEnvironment(Environment):
                     raise ValueError("policy returned non-finite or negative bids")
 
                 win = bids > tr.least_winning_cost
-                cost = np.where(win, tr.least_winning_cost, 0.0)
-                if spent + float(np.sum(cost)) > budget:
-                    win = self._truncate_to_budget(win, cost, tr.order_key, spent, budget)
-                    cost = np.where(win, tr.least_winning_cost, 0.0)
-                exposed = win & (tr.u_exposure < cfg.exposure_prob)
+                showable = tr.u_exposure < cfg.exposure_prob
+                charged = np.where(win & showable, tr.least_winning_cost, 0.0)
+                if spent + float(np.sum(charged)) > budget:
+                    win = self._truncate_to_budget(win, charged, tr.order_key, spent, budget)
+                cost = np.where(win, tr.least_winning_cost, 0.0)  # slot price, charged only if exposed
+                exposed = win & showable
+                charged = np.where(exposed, cost, 0.0)
                 converted = exposed & (tr.u_conversion < tr.p_true)
 
-                spent += float(np.sum(cost))
+                spent += float(np.sum(charged))
                 wins += int(np.sum(win))
                 conversions += int(np.sum(converted))
                 expected_conversions += float(np.sum(tr.pvalue[exposed]))
@@ -275,7 +281,7 @@ class ToyEnvironment(Environment):
     def _truncate_to_budget(
         win: np.ndarray, cost: np.ndarray, order_key: np.ndarray, spent: float, budget: float
     ) -> np.ndarray:
-        """Keep winners in order-key order while their cumulative cost fits."""
+        """Keep winners in order-key order while their cumulative charged cost fits."""
         idx = np.flatnonzero(win)
         order = idx[np.argsort(order_key[idx], kind="stable")]
         n_keep = int(np.sum(np.cumsum(cost[order]) <= budget - spent))

@@ -8,7 +8,7 @@ import sys
 from collections.abc import Sequence
 
 from . import __version__
-from .environments import INTEGRATION_STATUS, BackendNotIntegratedError
+from .environments import INTEGRATION_STATUS, AuctionNetRunnerError, AuctionNetSetupError, BackendNotIntegratedError
 from .environments import auctionnet
 from .evaluation.splits import SplitOverlapError
 from .types import ArtifactError, ConfigError
@@ -36,8 +36,9 @@ def _cmd_doctor(_: argparse.Namespace) -> int:
             print(f"      {problem}")
     print(f"backend toy: integration_status={INTEGRATION_STATUS['toy']}")
     print(f"backend auctionnet: integration_status={auctionnet.INTEGRATION_STATUS}")
-    for blocker in auctionnet.BLOCKERS:
-        print(f"  - {blocker}")
+    print(f"  pinned upstream commit: {auctionnet.PINNED_COMMIT}; setup: docs/AUCTIONNET_INTEGRATION.md")
+    for limitation in auctionnet.LIMITATIONS:
+        print(f"  - {limitation}")
     print("doctor does not install anything.")
     return EXIT_OK if (py_ok and kernel_ok) else EXIT_CHECK_FAILED
 
@@ -112,6 +113,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except (ConfigError, BackendNotIntegratedError, ArtifactError, SplitOverlapError) as exc:
+    except (
+        ConfigError,
+        BackendNotIntegratedError,
+        AuctionNetSetupError,
+        AuctionNetRunnerError,
+        ArtifactError,
+        SplitOverlapError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR

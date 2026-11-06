@@ -1,0 +1,40 @@
+# BidSwarm Lab - AuctionNet online-simulation smoke test (end-to-end through the real backend).
+# Needs the pinned upstream checkout and its Python 3.9 venv (docs/AUCTIONNET_INTEGRATION.md):
+#   export BIDSWARM_AUCTIONNET_REPO=/path/to/AuctionNet BIDSWARM_AUCTIONNET_PYTHON=/path/to/an-venv/bin/python
+# 32 delivery periods (train 16, validation 8, test 8); about 8 minutes with --max-workers 4.
+# Checks that the pipeline runs; the numbers are not evidence about any search method.
+
+[experiment]
+name = "auctionnet_smoke"
+seed = 20261106
+replicates = 1
+
+[environment]
+backend = "auctionnet"
+repo_path = "$BIDSWARM_AUCTIONNET_REPO"
+commit_sha = "c20de631a40e24669d1d6a8e2acefd8f492f172d"
+evaluation_path = "online"
+python_executable = "$BIDSWARM_AUCTIONNET_PYTHON"
+num_time_steps = 48
+player_index = 0                    # budget 2900, CPA constraint 100, category 0
+
+[splits]
+train = 2
+validation = 2
+test = 2
+
+[search]
+policy = "dual_control"
+proposer = "es"
+modes = ["single", "independent"]
+independent_workers = 2
+candidates_per_round = 2
+# 8 / 2 train scenarios = 4 candidates; single: 2 rounds, independent: 2 per worker, 1 round
+train_episode_budget = 8
+fitness_metric = "score_expected"
+
+[selection]
+top_k = 2
+
+[runtime]
+episode_timeout_s = 300.0

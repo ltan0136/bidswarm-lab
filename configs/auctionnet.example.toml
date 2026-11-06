@@ -1,9 +1,9 @@
-# BidSwarm Lab - AuctionNet backend EXAMPLE (not runnable yet).
+# BidSwarm Lab - AuctionNet backend: field reference (not runnable as is).
 #
-# The AuctionNet adapter is not implemented (integration_status = not_integrated).
-# `python -m bidswarm run --config configs/auctionnet.example.toml` must fail with
-# BackendNotIntegratedError; it never falls back to the toy backend.
-# See docs/AUCTIONNET_INTEGRATION.md.
+# repo_path is a placeholder, so `python -m bidswarm run --config configs/auctionnet.example.toml`
+# fails with AuctionNetSetupError before writing anything; it never falls back to the toy backend.
+# For a runnable config see auctionnet_smoke.toml / auctionnet_pilot.toml and
+# docs/AUCTIONNET_INTEGRATION.md (upstream checkout + Python 3.9 venv).
 
 [experiment]
 name = "auctionnet_example"
@@ -13,10 +13,10 @@ replicates = 3
 [environment]
 backend = "auctionnet"
 repo_path = "/path/to/AuctionNet"   # local checkout; not cloned or downloaded by this project
-commit_sha = ""                     # must be pinned and re-verified before adapting
-evaluation_path = "offline"         # "offline" (strategy_train_env/main/main_test.py) or "online" (simul_bidding_env)
-python_executable = "python3.9"     # upstream environment is Python 3.9.12
-num_time_steps = 48                 # unverified, see open questions
+commit_sha = "c20de631a40e24669d1d6a8e2acefd8f492f172d"  # verified in step 1 (docs/AUCTIONNET_INTEGRATION.md)
+evaluation_path = "online"          # online simulation needs no extra download; offline needs ~80GB of data
+python_executable = "python3.9"     # upstream needs Python 3.9 (checked with 3.9.25)
+num_time_steps = 48                 # verified: config/test.gin NUM_TICK
 
 [splits]
 train = 4
