@@ -6,10 +6,10 @@ v0.1 建了工程底座和"独立搜索"对照组；v0.2 加入 `cooperative`（
 
 ## 0. 前置：AuctionNet 接入
 
-见 [AUCTIONNET_INTEGRATION.md](AUCTIONNET_INTEGRATION.md) 的三步计划（只读调查 → shim → 子进程冒烟测试）。
-第 1 步已完成（固定上游 commit `c20de63`）：在线仿真无需额外下载，但发现静默回退 PID、内核花费记账与上游按曝光收费不一致、
-每周期约 45–50 秒等问题，第 2 步需要先处理，详见该文档第 5 节。
-在此之前，下面所有方向的结果都只是 toy 上的框架验证。
+三步计划（只读调查 → shim → 子进程冒烟测试）已完成，AuctionNet **在线仿真**后端可用（固定上游 commit `c20de63`，
+见 [AUCTIONNET_INTEGRATION.md](AUCTIONNET_INTEGRATION.md)）。内核记账与 toy 都已改为按曝光收费，toy 结果已重跑。
+下一步是 `configs/auctionnet_pilot.toml`（R = 10，约 13–14 小时），并先在 AuctionNet 上估计最小可检出效应。
+在 AuctionNet 实验跑出来之前，下面所有方向的结果都只是 toy 上的框架验证。
 
 ## 1. 信息交换
 
@@ -19,7 +19,7 @@ v0.1 建了工程底座和"独立搜索"对照组；v0.2 加入 `cooperative`（
 - 待做：其他拓扑（全连接、随机配对）、转发外来精英、共享失败区域或步长（σ）、按迁移间隔与 N 做扫描。
 - 已实现的第二种 proposer：`cmaes`。迁移在 CMA-ES 下只在代与代之间生效（外来精英成为下一代均值），
   所以同样的 `exchange_interval` 对两种 proposer 的实际作用不同。
-- 检验强度：toy 上迁移带来的测试分差若与"训练预算加倍"相当（约 1.5 分）或更小，需要 R ≥ 100 才有约 80% 功效
+- 检验强度：toy 上迁移带来的测试分差若与"训练预算加倍"相当（约 1.1 ~ 1.7 分）或更小，需要 R ≥ 100 才有约 80% 功效（MDE 约 1.4 分）
   （见 [POWER_ANALYSIS.md](POWER_ANALYSIS.md)）；扫描多种拓扑 / 间隔时要控制多重比较。
 
 ## 2. LLM proposer

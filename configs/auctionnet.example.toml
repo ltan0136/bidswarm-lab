@@ -1,9 +1,9 @@
-# BidSwarm Lab - AuctionNet backend EXAMPLE (not runnable yet).
+# BidSwarm Lab - AuctionNet backend: field reference (not runnable as is).
 #
-# The AuctionNet adapter is not implemented (integration_status = not_integrated).
-# `python -m bidswarm run --config configs/auctionnet.example.toml` must fail with
-# BackendNotIntegratedError; it never falls back to the toy backend.
-# See docs/AUCTIONNET_INTEGRATION.md.
+# repo_path is a placeholder, so `python -m bidswarm run --config configs/auctionnet.example.toml`
+# fails with AuctionNetSetupError before writing anything; it never falls back to the toy backend.
+# For a runnable config see auctionnet_smoke.toml / auctionnet_pilot.toml and
+# docs/AUCTIONNET_INTEGRATION.md (upstream checkout + Python 3.9 venv).
 
 [experiment]
 name = "auctionnet_example"

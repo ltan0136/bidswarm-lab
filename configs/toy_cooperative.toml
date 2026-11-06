@@ -1,6 +1,6 @@
 # BidSwarm Lab - cooperative vs independent vs single on the toy backend, R = 100.
 # Identical to toy_experiment.toml except R. R = 100 follows docs/POWER_ANALYSIS.md: the minimum
-# detectable effect at 80% power is about 1.6 points, while R = 20 only detects >= 3.5 points.
+# detectable effect at 80% power is about 1.7 points, while R = 20 only detects >= 3.6 points.
 # Results say nothing about AuctionNet or real revenue.
 
 [experiment]
