@@ -255,8 +255,22 @@ def _table(header: Sequence[str], rows: Sequence[Sequence[Any]]) -> list[str]:
     return lines
 
 
+def _setting(view: _RunView) -> str:
+    """How conclusions name the environment; the toy wording is unchanged."""
+    return "AuctionNet 在线仿真" if view.manifest["backend"] == "auctionnet" else "toy"
+
+
 def _disclaimer(view: _RunView) -> str:
     m = view.manifest
+    if m["backend"] == "auctionnet":
+        env = m["config"]["environment"]
+        return (
+            f"> **固定声明**：backend={m['backend']}，purpose={m['purpose']}，"
+            f"score_formula={m['score_formula']}。本报告的全部数字来自 AuctionNet 在线仿真"
+            f"（上游 commit `{env['commit_sha'][:12]}`，玩家位置 {env['player_index']}，竞争者为上游固定的基线策略），"
+            "**不代表任何真实广告收益**。"
+            f"AuctionNet 后端状态：integration_status={m['auctionnet_integration_status']}。"
+        )
     return (
         f"> **固定声明**：backend={m['backend']}，purpose={m['purpose']}，"
         f"score_formula={m['score_formula']}。本报告的全部数字来自内置 toy 环境，"
@@ -397,7 +411,8 @@ def _paired_pair(
         header.append(f"Holm 校正 p（{family} 个比较）")
     lines += _table(header, rows)
     lines.append("")
-    lines.append(f"结论（自动生成，仅描述上表）：{_verdict(a_mode, b_mode, primary_ci, primary_p, primary_n, holm_p, family)}")
+    verdict = _verdict(a_mode, b_mode, primary_ci, primary_p, primary_n, holm_p, family, _setting(view))
+    lines.append(f"结论（自动生成，仅描述上表）：{verdict}")
     if primary_n < SMALL_SAMPLE_PAIRS:
         lines.append("")
         lines.append(
@@ -422,12 +437,13 @@ def _verdict(
     n: int,
     holm: float | None = None,
     family: int = 1,
+    setting: str = "toy",
 ) -> str:
     if ci is None or p is None:
         return f"配对样本不足（n={n} < 2），无法给出置信区间。"
     p_text = f"置换检验 p {'< 0.001' if p < 1e-3 else f'= {p:.3f}'}"
     if ci[0] <= 0 <= ci[1]:
-        return f"主指标的 95% CI 包含 0（{p_text}）：在本 toy 设置下未观察到 {a} 与 {b} 之间可分辨的差异。"
+        return f"主指标的 95% CI 包含 0（{p_text}）：在本 {setting} 设置下未观察到 {a} 与 {b} 之间可分辨的差异。"
     direction = "高于" if ci[0] > 0 else "低于"
     sign = "正" if ci[0] > 0 else "负"
     if holm is not None and holm > 0.05:
@@ -436,7 +452,7 @@ def _verdict(
             f"p = {holm:.3f} > 0.05：不能确认 {a} 的测试分{direction} {b}。"
         )
     holm_text = "" if holm is None else f"，Holm 校正后 p {'< 0.001' if holm < 1e-3 else f'= {holm:.3f}'}"
-    return f"主指标的 95% CI 不含 0 且为{sign}（{p_text}{holm_text}）：在本 toy 设置下，{a} 的测试分{direction} {b}。"
+    return f"主指标的 95% CI 不含 0 且为{sign}（{p_text}{holm_text}）：在本 {setting} 设置下，{a} 的测试分{direction} {b}。"
 
 
 def _section_winners_curse(view: _RunView) -> list[str]:

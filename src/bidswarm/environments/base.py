@@ -8,6 +8,13 @@ from typing import Any, Sequence
 from ..types import PURPOSE, SCORE_FORMULA, STATUS_FAILED
 
 
+def purpose_for(backend: str) -> str:
+    """The ``purpose`` tag every record of a backend carries."""
+    from ..types import BACKEND_AUCTIONNET, PURPOSE_AUCTIONNET
+
+    return PURPOSE_AUCTIONNET if backend == BACKEND_AUCTIONNET else PURPOSE
+
+
 class BackendNotIntegratedError(RuntimeError):
     """Raised when a backend exists only as a placeholder.
 
@@ -49,12 +56,17 @@ class Environment(ABC):
 
 
 def failed_episode(
-    scenario: dict[str, Any], backend: str, error: str, wall_time_s: float, opportunities: int | None
+    scenario: dict[str, Any],
+    backend: str,
+    error: str,
+    wall_time_s: float,
+    opportunities: int | None,
+    purpose: str = PURPOSE,
 ) -> dict[str, Any]:
     """Episode record for a failure: every metric is null, never a guessed value."""
     return {
         "backend": backend,
-        "purpose": PURPOSE,
+        "purpose": purpose,
         "score_formula": SCORE_FORMULA,
         "scenario_id": scenario.get("scenario_id"),
         "split": scenario.get("split"),

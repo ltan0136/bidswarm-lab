@@ -1,8 +1,8 @@
 """Environment backends and the backend factory.
 
 Backends are selected explicitly by name. An unknown name is a configuration
-error, and a known-but-unintegrated backend raises
-``BackendNotIntegratedError``; there is never a silent fallback to ``toy``.
+error; a backend whose setup is missing (for AuctionNet: the pinned checkout
+or interpreter) raises; there is never a silent fallback to ``toy``.
 """
 
 from __future__ import annotations
@@ -11,7 +11,8 @@ from typing import Any, Mapping
 
 from ..types import BACKEND_AUCTIONNET, BACKEND_TOY, ConfigError
 from . import auctionnet, toy
-from .base import BackendNotIntegratedError, Environment
+from .auctionnet import AuctionNetRunnerError, AuctionNetSetupError
+from .base import BackendNotIntegratedError, Environment, purpose_for
 
 KNOWN_BACKENDS = (BACKEND_TOY, BACKEND_AUCTIONNET)
 
@@ -44,10 +45,13 @@ def make_environment(cfg: Mapping[str, Any]) -> Environment:
 
 
 __all__ = [
+    "AuctionNetRunnerError",
+    "AuctionNetSetupError",
     "INTEGRATION_STATUS",
     "KNOWN_BACKENDS",
     "BackendNotIntegratedError",
     "Environment",
     "make_environment",
+    "purpose_for",
     "validate_environment_config",
 ]

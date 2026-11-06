@@ -36,7 +36,7 @@ from .artifacts.store import (
     to_jsonable,
 )
 from .config import ExperimentConfig
-from .environments import INTEGRATION_STATUS, make_environment
+from .environments import INTEGRATION_STATUS, make_environment, purpose_for
 from .environments.auctionnet import INTEGRATION_STATUS as AUCTIONNET_STATUS
 from .evaluation.budget import BudgetLedger
 from .evaluation.runner import EpisodeExecutor, resolve_max_workers
@@ -48,7 +48,6 @@ from .types import (
     PHASE_TEST,
     PHASE_TRAIN,
     PHASE_VALIDATION,
-    PURPOSE,
     SCORE_FORMULA,
     ArtifactError,
     EpisodeTask,
@@ -104,7 +103,7 @@ def _manifest(
         "backend": config.backend,
         "integration_status": INTEGRATION_STATUS[config.backend],
         "auctionnet_integration_status": AUCTIONNET_STATUS,
-        "purpose": PURPOSE,
+        "purpose": purpose_for(config.backend),
         "score_formula": SCORE_FORMULA,
         "executor": {
             "serial": serial,

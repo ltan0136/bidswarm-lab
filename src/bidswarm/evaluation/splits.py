@@ -56,6 +56,7 @@ class SplitSet:
 def check_disjoint(split_set: SplitSet) -> None:
     seen_ids: dict[str, str] = {}
     seen_seeds: dict[int, str] = {}
+    seen_episodes: dict[int, str] = {}  # backends whose traffic is selected by an episode index
     for name in SPLITS:
         for sc in split_set.split(name):
             sid, seed = sc["scenario_id"], sc["seed"]
@@ -63,6 +64,11 @@ def check_disjoint(split_set: SplitSet) -> None:
                 raise SplitOverlapError(f"scenario id {sid} appears in {seen_ids[sid]} and {name}")
             if seed in seen_seeds:
                 raise SplitOverlapError(f"scenario seed {seed} appears in {seen_seeds[seed]} and {name}")
+            episode = sc.get("episode")
+            if episode is not None:
+                if episode in seen_episodes:
+                    raise SplitOverlapError(f"episode {episode} appears in {seen_episodes[episode]} and {name}")
+                seen_episodes[episode] = name
             seen_ids[sid] = name
             seen_seeds[seed] = name
 

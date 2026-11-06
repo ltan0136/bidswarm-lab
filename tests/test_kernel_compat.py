@@ -69,3 +69,23 @@ def test_kernel_compiles_on_real_python39():
     proc = subprocess.run(["python3.9", "-m", "py_compile", *files], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
     assert KERNEL_DIR.is_dir()
+
+
+RUNNER = KERNEL_DIR.parent / "environments" / "auctionnet_runner.py"
+
+
+def test_auctionnet_runner_is_python39_and_imports_no_bidswarm_package():
+    """The runner executes in upstream's Python 3.9 process and may import only kernel + upstream."""
+    tree = ast.parse(RUNNER.read_text(encoding="utf-8"), filename=str(RUNNER), feature_version=(3, 9))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            assert node.level == 0, "the runner is executed by path; relative imports cannot work"
+            assert not (node.module or "").startswith("bidswarm")
+        elif isinstance(node, ast.Import):
+            assert all(not a.name.startswith("bidswarm") for a in node.names)
+
+
+@pytest.mark.skipif(shutil.which("python3.9") is None, reason="no python3.9 interpreter on PATH")
+def test_auctionnet_runner_compiles_on_real_python39():
+    proc = subprocess.run(["python3.9", "-m", "py_compile", str(RUNNER)], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr

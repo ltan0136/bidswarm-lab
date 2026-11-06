@@ -10,6 +10,7 @@ BACKEND_AUCTIONNET = "auctionnet"
 
 # Tags attached to every toy output so results cannot be mistaken for AuctionNet.
 PURPOSE = "framework_smoke_test"
+PURPOSE_AUCTIONNET = "auctionnet_online_simulation"
 SCORE_FORMULA = "auctionnet_neurips_replica"
 
 STATUS_OK = "ok"

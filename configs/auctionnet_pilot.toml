@@ -1,0 +1,42 @@
+# BidSwarm Lab - first AuctionNet experiment design (NOT run yet).
+# Same three-mode comparison as toy_cooperative.toml, scaled to what one 4-core / 15 GB machine can do:
+# training 3 modes x 96 x R=10 = 2,880 periods, validation 4 x 4 x 3 x 10 = 480, test 8 x 5 x 10 = 400;
+# about 3,760 periods, roughly 13-14 hours with --max-workers 4 (each worker holds ~2.7 GB).
+# R = 10 detects only large effects; estimate the AuctionNet minimum detectable effect before reading it.
+#   export BIDSWARM_AUCTIONNET_REPO=/path/to/AuctionNet BIDSWARM_AUCTIONNET_PYTHON=/path/to/an-venv/bin/python
+
+[experiment]
+name = "auctionnet_pilot"
+seed = 20261106
+replicates = 10
+
+[environment]
+backend = "auctionnet"
+repo_path = "$BIDSWARM_AUCTIONNET_REPO"
+commit_sha = "c20de631a40e24669d1d6a8e2acefd8f492f172d"
+evaluation_path = "online"
+python_executable = "$BIDSWARM_AUCTIONNET_PYTHON"
+num_time_steps = 48
+player_index = 0
+
+[splits]
+train = 4
+validation = 4
+test = 8
+
+[search]
+policy = "dual_control"
+proposer = "es"
+modes = ["single", "independent", "cooperative"]
+independent_workers = 4
+exchange_interval = 1
+candidates_per_round = 2
+# 96 / 4 train scenarios = 24 candidates; single: 12 rounds, independent: 6 per worker, 3 rounds
+train_episode_budget = 96
+fitness_metric = "score_expected"
+
+[selection]
+top_k = 4
+
+[runtime]
+episode_timeout_s = 300.0
